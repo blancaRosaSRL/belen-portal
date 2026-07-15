@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panadería Belén — Portal</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600;700&display=swap');
+  :root{
+    --trigo:#C8860A; --trigo-dk:#8B5E08; --horno:#2C1810; --corteza:#5C3D2E;
+    --miga:#FDF6E3; --miga-dk:#F5EDD4; --texto:#1A0F08; --texto-2:#5C4A3A;
+    --borde:#DDD0B8; --sombra:0 4px 18px rgba(44,24,16,.14);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:'Inter',sans-serif; background:var(--miga); color:var(--texto);
+    min-height:100vh; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; padding:24px;
+  }
+  .brand{text-align:center; margin-bottom:34px}
+  .brand .icon{font-size:52px; display:block; margin-bottom:8px}
+  .brand h1{font-family:'Playfair Display',serif; font-size:30px; color:var(--horno)}
+  .brand p{font-size:13px; color:var(--texto-2); letter-spacing:2px; text-transform:uppercase; margin-top:4px}
+  .menu{display:flex; flex-direction:column; gap:16px; width:100%; max-width:420px}
+  .btn-portal{
+    display:flex; align-items:center; gap:16px; text-decoration:none;
+    background:#fff; border:2px solid var(--borde); border-radius:16px;
+    padding:20px 22px; box-shadow:var(--sombra); transition:transform .12s, border-color .12s;
+  }
+  .btn-portal:active{transform:scale(.98)}
+  .btn-portal:hover{border-color:var(--trigo)}
+  .btn-portal .ico{
+    font-size:30px; width:56px; height:56px; display:flex; align-items:center;
+    justify-content:center; background:var(--miga-dk); border-radius:14px; flex-shrink:0;
+  }
+  .btn-portal .tit{font-size:17px; font-weight:700; color:var(--horno)}
+  .btn-portal .sub{font-size:12.5px; color:var(--texto-2); margin-top:3px; line-height:1.35}
+  .pie{margin-top:38px; font-size:11px; color:var(--texto-2); text-align:center; line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="brand">
+    <span class="icon">🥖</span>
+    <h1>Panadería Belén</h1>
+    <p>Portal del equipo</p>
+  </div>
+
+  <nav class="menu">
+    <a class="btn-portal" href="Belen_Pedido_Movil.html">
+      <span class="ico">🛒</span>
+      <span>
+        <span class="tit">Hacer un Pedido</span>
+        <span class="sub" style="display:block">Para sucursales: pedir productos e insumos al depósito central</span>
+      </span>
+    </a>
+
+    <a class="btn-portal" href="Belen_Recepcion_Movil.html">
+      <span class="ico">📦</span>
+      <span>
+        <span class="tit">Recepción de Mercadería</span>
+        <span class="sub" style="display:block">Confirmar lo que llega a cada sucursal y avisar diferencias</span>
+      </span>
+    </a>
+
+    <a class="btn-portal" href="Belen_Repartidor_Portal.html">
+      <span class="ico">🛵</span>
+      <span>
+        <span class="tit">Portal del Repartidor</span>
+        <span class="sub" style="display:block">Registrar entregas realizadas y ver pedidos asignados</span>
+      </span>
+    </a>
+  </nav>
+
+  <div class="pie">
+    Panadería Belén · Sistema de gestión<br>
+    Guardá esta página en la pantalla de inicio de tu celular para acceder rápido
+  </div>
+</body>
+</html>
