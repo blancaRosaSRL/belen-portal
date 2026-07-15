@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal Repartidores — Panadería Belén</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --horno:    #2C1810;
+    --corteza:  #5C3D2E;
+    --trigo:    #C8860A;
+    --trigo-lt: #FEF3E2;
+    --trigo-dk: #9A6408;
+    --vapor:    #D4EDDA;
+    --vapor-dk: #2D6A4F;
+    --alerta:   #C0392B;
+    --alerta-lt:#FDECEA;
+    --borde:    #DDD0B8;
+    --miga:     #FAF6EF;
+    --miga-dk:  #F0E8D8;
+    --texto:    #2C1810;
+    --texto-2:  #5C4A3A;
+    --r: 10px;
+    --sombra: 0 2px 12px rgba(44,24,16,.08);
+    --sombra-lg: 0 8px 32px rgba(44,24,16,.15);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Inter',sans-serif; background:var(--miga); color:var(--texto); min-height:100vh; }
+
+  /* ── LOGIN ─────────────────────────────────────────────────── */
+  .login-screen {
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg, var(--horno) 0%, var(--corteza) 60%, #4a2e1f 100%);
+    padding:20px;
+  }
+  .login-box {
+    background:#fff; border-radius:18px; padding:40px 36px; width:100%; max-width:380px;
+    box-shadow:0 20px 60px rgba(0,0,0,.35); text-align:center;
+  }
+  .login-logo { font-size:52px; margin-bottom:12px; }
+  .login-title { font-family:'Playfair Display',serif; font-size:24px; font-weight:900; color:var(--horno); margin-bottom:4px; }
+  .login-sub { font-size:12px; color:var(--texto-2); text-transform:uppercase; letter-spacing:1.5px; margin-bottom:32px; }
+  .login-label { font-size:12px; font-weight:700; color:var(--texto-2); text-align:left; margin-bottom:6px; display:block; }
+  .login-input {
+    width:100%; padding:14px 16px; border:2px solid var(--borde); border-radius:10px;
+    font-family:'Inter',sans-serif; font-size:18px; font-weight:700; letter-spacing:4px;
+    text-transform:uppercase; text-align:center; outline:none; transition:border-color .15s;
+    color:var(--horno);
+  }
+  .login-input:focus { border-color:var(--trigo); }
+  .login-input::placeholder { letter-spacing:0; font-weight:400; font-size:14px; color:#ccc; text-transform:none; }
+  .btn-login {
+    width:100%; padding:15px; background:var(--trigo); color:#fff; border:none; border-radius:10px;
+    font-family:'Inter',sans-serif; font-size:15px; font-weight:700; cursor:pointer; margin-top:14px;
+    transition:background .15s;
+  }
+  .btn-login:hover { background:var(--trigo-dk); }
+  .login-error { color:var(--alerta); font-size:13px; margin-top:12px; min-height:20px; }
+  .login-hint { font-size:11px; color:var(--texto-2); margin-top:10px; }
+
+  /* ── PORTAL ─────────────────────────────────────────────────── */
+  .portal { display:none; max-width:700px; margin:0 auto; padding:20px; }
+  .portal-header {
+    background:linear-gradient(135deg, var(--horno), var(--corteza));
+    border-radius:var(--r); padding:20px 24px; margin-bottom:20px;
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    color:#fff; flex-wrap:wrap;
+  }
+  .portal-header-left { display:flex; align-items:center; gap:14px; }
+  .portal-avatar {
+    width:48px; height:48px; border-radius:50%; display:flex; align-items:center;
+    justify-content:center; font-size:22px; font-weight:700; color:#fff; flex-shrink:0;
+    border:2px solid rgba(255,255,255,.3);
+  }
+  .portal-nombre { font-family:'Playfair Display',serif; font-size:18px; font-weight:700; }
+  .portal-meta { font-size:11px; opacity:.7; margin-top:2px; }
+  .btn-salir {
+    background:rgba(255,255,255,.15); border:1.5px solid rgba(255,255,255,.3);
+    color:#fff; border-radius:8px; padding:8px 14px; font-size:12px; cursor:pointer;
+    font-family:'Inter',sans-serif; transition:background .15s;
+  }
+  .btn-salir:hover { background:rgba(255,255,255,.25); }
+
+  /* ── SECTORES TABS ─────────────────────────────────────────── */
+  .sector-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  .sector-tab {
+    padding:8px 14px; border-radius:8px; border:1.5px solid var(--borde);
+    background:#fff; font-size:12px; font-weight:600; cursor:pointer; color:var(--texto-2);
+    transition:all .15s; white-space:nowrap;
+  }
+  .sector-tab:hover { border-color:var(--trigo); color:var(--trigo-dk); }
+  .sector-tab.active { background:var(--horno); border-color:var(--horno); color:#fff; }
+
+  /* ── PRODUCTOS ─────────────────────────────────────────────── */
+  .productos-grid { display:grid; gap:10px; }
+  .producto-card {
+    background:#fff; border-radius:var(--r); border:1px solid var(--borde);
+    padding:14px 16px; display:flex; align-items:center; gap:14px;
+    box-shadow:var(--sombra); transition:box-shadow .15s;
+  }
+  .producto-card:hover { box-shadow:var(--sombra-lg); }
+  .producto-info { flex:1; min-width:0; }
+  .producto-nombre { font-weight:700; font-size:14px; color:var(--horno); }
+  .producto-sector { font-size:11px; color:var(--texto-2); margin-top:2px; }
+  .producto-precios { display:flex; gap:10px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+  .precio-rep { font-size:17px; font-weight:800; color:var(--horno); }
+  .precio-lista-tachado { font-size:11px; color:var(--texto-2); text-decoration:line-through; }
+  .descuento-chip {
+    background:var(--vapor); color:var(--vapor-dk); border-radius:8px;
+    padding:2px 8px; font-size:10px; font-weight:700;
+  }
+  .qty-control { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .qty-btn {
+    width:32px; height:32px; border-radius:50%; border:1.5px solid var(--borde);
+    background:#fff; font-size:18px; font-weight:700; cursor:pointer; color:var(--horno);
+    display:flex; align-items:center; justify-content:center; transition:all .1s; line-height:1;
+  }
+  .qty-btn:active { background:var(--trigo-lt); transform:scale(.9); }
+  .qty-display {
+    width:44px; text-align:center; font-size:16px; font-weight:700; color:var(--horno);
+    border:1.5px solid var(--borde); border-radius:8px; padding:6px 4px;
+    font-family:'Inter',sans-serif; outline:none;
+  }
+  .qty-display:focus { border-color:var(--trigo); }
+
+  /* ── RESUMEN PEDIDO ─────────────────────────────────────────── */
+  .resumen-wrap {
+    position:sticky; bottom:0; background:#fff; border-top:2px solid var(--borde);
+    padding:16px 20px; margin:0 -20px; border-radius:0 0 var(--r) var(--r);
+  }
+  .resumen-items { max-height:160px; overflow-y:auto; margin-bottom:12px; }
+  .resumen-row {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:5px 0; border-bottom:1px solid var(--miga-dk); font-size:12px;
+  }
+  .resumen-row:last-child { border-bottom:none; }
+  .resumen-total-row {
+    display:flex; justify-content:space-between; align-items:center;
+    padding-top:10px; border-top:2px solid var(--borde); margin-top:6px;
+  }
+  .total-label { font-size:13px; font-weight:700; color:var(--texto-2); }
+  .total-monto { font-size:22px; font-weight:900; color:var(--horno); font-family:'Playfair Display',serif; }
+  .btn-pedir {
+    width:100%; padding:16px; background:var(--trigo); color:#fff; border:none; border-radius:10px;
+    font-family:'Inter',sans-serif; font-size:16px; font-weight:700; cursor:pointer; margin-top:12px;
+    transition:background .15s;
+  }
+  .btn-pedir:hover { background:var(--trigo-dk); }
+  .btn-pedir:disabled { background:var(--borde); color:var(--texto-2); cursor:not-allowed; }
+  .empty-productos { text-align:center; padding:40px 20px; color:var(--texto-2); }
+  .empty-productos .icon { font-size:40px; margin-bottom:10px; }
+
+  /* ── CONFIRMACIÓN ─────────────────────────────────────────── */
+  .confirmacion {
+    display:none; text-align:center; padding:48px 24px;
+    background:#fff; border-radius:var(--r); box-shadow:var(--sombra-lg);
+    margin-top:20px;
+  }
+  .confirmacion .icon { font-size:56px; margin-bottom:16px; }
+  .confirmacion h2 { font-family:'Playfair Display',serif; color:var(--vapor-dk); margin-bottom:8px; }
+  .confirmacion p { color:var(--texto-2); font-size:14px; margin-bottom:20px; }
+  .btn-nuevo-pedido {
+    padding:14px 28px; background:var(--horno); color:#fff; border:none; border-radius:10px;
+    font-size:14px; font-weight:700; cursor:pointer; font-family:'Inter',sans-serif;
+  }
+
+  @media(max-width:600px){
+    .portal { padding:12px; }
+    .producto-card { flex-direction:column; align-items:flex-start; gap:10px; }
+    .qty-control { align-self:flex-end; }
+  }
+</style>
+</head>
+<body>
+
+<!-- PANTALLA DE LOGIN -->
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">🥖</div>
+    <div class="login-title">Panadería Belén</div>
+    <div class="login-sub">Portal de Repartidores</div>
+    <label class="login-label" for="inp-codigo">Ingresá tu código de acceso</label>
+    <input type="text" id="inp-codigo" class="login-input"
+      placeholder="Ej: BEL-7X4K"
+      maxlength="8"
+      oninput="this.value=this.value.toUpperCase()"
+      onkeydown="if(event.key==='Enter') iniciarSesionRep()">
+    <button class="btn-login" onclick="iniciarSesionRep()">Entrar →</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-hint">Si no tenés tu código, pedíselo a la administración de la panadería.</div>
+  </div>
+</div>
+
+<!-- PORTAL PRINCIPAL -->
+<div class="portal" id="portal-main">
+
+  <div class="portal-header">
+    <div class="portal-header-left">
+      <div class="portal-avatar" id="portal-avatar">?</div>
+      <div>
+        <div class="portal-nombre" id="portal-nombre">—</div>
+        <div class="portal-meta" id="portal-meta">—</div>
+      </div>
+    </div>
+    <button class="btn-salir" onclick="cerrarSesionRep()">Salir</button>
+  </div>
+
+  <div id="portal-contenido">
+    <!-- Tabs de sector -->
+    <div class="sector-tabs" id="portal-sector-tabs"></div>
+    <!-- Grid de productos -->
+    <div class="productos-grid" id="portal-productos"></div>
+    <!-- Resumen y botón enviar -->
+    <div class="resumen-wrap" id="portal-resumen" style="display:none">
+      <div class="resumen-items" id="portal-resumen-items"></div>
+      <div class="resumen-total-row">
+        <span class="total-label">Total del pedido</span>
+        <span class="total-monto" id="portal-total">$0,00</span>
+      </div>
+      <button class="btn-pedir" id="btn-enviar-pedido" onclick="enviarPedidoPortal()">
+        📦 Confirmar Pedido
+      </button>
+    </div>
+  </div>
+
+  <!-- Confirmación post-envío -->
+  <div class="confirmacion" id="portal-confirmacion">
+    <div class="icon">✅</div>
+    <h2>¡Pedido enviado!</h2>
+    <p id="conf-detalle">Tu pedido fue enviado correctamente a la fábrica.</p>
+    <button class="btn-nuevo-pedido" onclick="nuevoPedidoPortal()">Hacer otro pedido</button>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ── Pegá aquí la URL de tu Google Apps Script (igual que en la app principal)
+const SYNC_URL = 'PEGAR_AQUI_TU_URL_DE_APPS_SCRIPT';
+const SYNC_ACTIVO = !SYNC_URL.includes('PEGAR_AQUI');
+
+// ── Fallback: datos del catálogo hardcodeados para cuando no hay sync
+// (la app principal puede exportar esto — ver instrucciones abajo)
+// Si SYNC_ACTIVO es true, se cargan automáticamente desde el servidor.
+let catalogoLocal = [];   // Se puebla desde el servidor o localStorage
+let repartidorActual = null;
+let cantidades = {};      // catId → cantidad
+let sectorActivo = null;
+
+const SECTORES_ORDEN = [
+  'Panadería','Pastelería','Repostería','Sandwichería','Frituras','Tercerizado'
+];
+
+// ═══════════════════════════════════════════════════════════════
+// INICIO — leer código de la URL si viene como parámetro
+// ═══════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', ()=>{
+  const params = new URLSearchParams(window.location.search);
+  const codigoUrl = params.get('c');
+  if(codigoUrl){
+    document.getElementById('inp-codigo').value = codigoUrl.toUpperCase();
+    iniciarSesionRep();
+  }
+  // Intentar cargar catálogo de localStorage si el usuario ya entró antes
+  const catCached = localStorage.getItem('belen_portal_catalogo');
+  if(catCached){
+    try{ catalogoLocal = JSON.parse(catCached); }catch(e){}
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// LOGIN
+// ═══════════════════════════════════════════════════════════════
+async function iniciarSesionRep(){
+  const codigo = document.getElementById('inp-codigo').value.trim().toUpperCase();
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+
+  if(!codigo){ errEl.textContent = '⚠️ Ingresá tu código de acceso'; return; }
+
+  // Intentar validar contra el servidor (si está configurado)
+  if(SYNC_ACTIVO){
+    try{
+      errEl.textContent = '🔄 Verificando…';
+      const res = await fetch(`${SYNC_URL}?accion=cargarDBCompleta`);
+      const data = await res.json();
+      if(data.ok && data.db){
+        const rep = (data.db.repartidores||[]).find(r=>r.codigo===codigo && r.estado==='Activo');
+        if(!rep){ errEl.textContent = '❌ Código incorrecto o repartidor inactivo'; return; }
+        repartidorActual = rep;
+        // Armar precios del catálogo para este repartidor
+        catalogoLocal = (data.db.catalogoProductos||[])
+          .filter(p=>p.estado==='Activo')
+          .map(p=>({...p, precioRep: rep.precios?.[p.id]!==undefined ? rep.precios[p.id] : p.precio}));
+        localStorage.setItem('belen_portal_catalogo', JSON.stringify(catalogoLocal));
+        mostrarPortal();
+        return;
+      }
+    }catch(e){
+      // Falló la conexión — intentar con localStorage local de la app
+    }
+  }
+
+  // Fallback: buscar en localStorage de la app principal (mismo origen)
+  try{
+    const lsRaw = localStorage.getItem('panaderia_belen_v1');
+    if(lsRaw){
+      const db = JSON.parse(lsRaw);
+      const rep = (db.repartidores||[]).find(r=>r.codigo===codigo && r.estado==='Activo');
+      if(rep){
+        repartidorActual = rep;
+        catalogoLocal = (db.catalogoProductos||[])
+          .filter(p=>p.estado==='Activo')
+          .map(p=>({...p, precioRep: rep.precios?.[p.id]!==undefined ? rep.precios[p.id] : p.precio}));
+        localStorage.setItem('belen_portal_catalogo', JSON.stringify(catalogoLocal));
+        mostrarPortal();
+        return;
+      }
+    }
+  }catch(e){}
+
+  errEl.textContent = '❌ Código incorrecto. Si el problema persiste, contactá a la panadería.';
+}
+
+function cerrarSesionRep(){
+  repartidorActual = null;
+  cantidades = {};
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('portal-main').style.display = 'none';
+  document.getElementById('inp-codigo').value = '';
+  document.getElementById('login-error').textContent = '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PORTAL
+// ═══════════════════════════════════════════════════════════════
+function mostrarPortal(){
+  const r = repartidorActual;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('portal-main').style.display = 'block';
+  document.getElementById('portal-confirmacion').style.display = 'none';
+  document.getElementById('portal-contenido').style.display = 'block';
+
+  // Header
+  document.getElementById('portal-avatar').textContent = r.nombre.charAt(0);
+  document.getElementById('portal-avatar').style.background = r.color||'#C8860A';
+  document.getElementById('portal-nombre').textContent = r.nombre;
+  document.getElementById('portal-meta').textContent =
+    [r.zona?'📍 '+r.zona:'', r.descuento?r.descuento+'% descuento':''].filter(Boolean).join(' · ') || 'Repartidor activo';
+
+  // Sectores con productos
+  const sectoresConProductos = SECTORES_ORDEN.filter(s=>
+    catalogoLocal.some(p=>p.sector===s)
+  );
+  if(!sectorActivo || !sectoresConProductos.includes(sectorActivo)){
+    sectorActivo = sectoresConProductos[0] || null;
+  }
+
+  const tabsCont = document.getElementById('portal-sector-tabs');
+  tabsCont.innerHTML = sectoresConProductos.map(s=>`
+    <button class="sector-tab ${s===sectorActivo?'active':''}" onclick="cambiarSectorPortal('${s}')">${s}</button>
+  `).join('');
+
+  cantidades = {};
+  renderProductosPortal();
+}
+
+function cambiarSectorPortal(sector){
+  sectorActivo = sector;
+  document.querySelectorAll('.sector-tab').forEach(btn=>{
+    btn.classList.toggle('active', btn.textContent.trim()===sector);
+  });
+  renderProductosPortal();
+}
+
+function renderProductosPortal(){
+  const grid = document.getElementById('portal-productos');
+  const productos = catalogoLocal.filter(p=>p.sector===sectorActivo);
+
+  if(!productos.length){
+    grid.innerHTML='<div class="empty-productos"><div class="icon">📭</div><p>Sin productos en este sector</p></div>';
+    return;
+  }
+
+  grid.innerHTML = productos.map(p=>{
+    const cant = cantidades[p.id]||0;
+    const descPct = p.precio>0 ? (((p.precio-p.precioRep)/p.precio)*100).toFixed(0) : 0;
+    return `<div class="producto-card" id="pcard-${p.id}">
+      <div class="producto-info">
+        <div class="producto-nombre">${p.nombre}</div>
+        <div class="producto-sector">${p.sector} · ${p.uom||'Unidad'}</div>
+        <div class="producto-precios">
+          <span class="precio-rep">$${p.precioRep.toLocaleString('es-AR',{minimumFractionDigits:2})}</span>
+          ${p.precio!==p.precioRep?`<span class="precio-lista-tachado">$${p.precio.toLocaleString('es-AR',{minimumFractionDigits:2})}</span>`:''}
+          ${descPct>0?`<span class="descuento-chip">${descPct}% OFF</span>`:''}
+        </div>
+      </div>
+      <div class="qty-control">
+        <button class="qty-btn" onclick="cambiarCantidad('${p.id}',-1)">−</button>
+        <input type="number" class="qty-display" value="${cant}" min="0"
+          oninput="setCantidad('${p.id}',this.value)" id="qty-${p.id}">
+        <button class="qty-btn" onclick="cambiarCantidad('${p.id}',1)">+</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  actualizarResumen();
+}
+
+function cambiarCantidad(catId, delta){
+  const actual = cantidades[catId]||0;
+  const nuevo = Math.max(0, actual + delta);
+  cantidades[catId] = nuevo;
+  const el = document.getElementById('qty-'+catId);
+  if(el) el.value = nuevo;
+  const card = document.getElementById('pcard-'+catId);
+  if(card) card.style.background = nuevo>0 ? 'var(--trigo-lt)' : '#fff';
+  actualizarResumen();
+}
+
+function setCantidad(catId, val){
+  const nuevo = Math.max(0, parseFloat(val)||0);
+  cantidades[catId] = nuevo;
+  const card = document.getElementById('pcard-'+catId);
+  if(card) card.style.background = nuevo>0 ? 'var(--trigo-lt)' : '#fff';
+  actualizarResumen();
+}
+
+function actualizarResumen(){
+  const items = catalogoLocal
+    .filter(p=>(cantidades[p.id]||0)>0)
+    .map(p=>({...p, cantidad:cantidades[p.id], subtotal:cantidades[p.id]*p.precioRep}));
+
+  const total = items.reduce((s,i)=>s+i.subtotal,0);
+  const resumenWrap = document.getElementById('portal-resumen');
+  const btnEnviar = document.getElementById('btn-enviar-pedido');
+
+  if(items.length===0){
+    resumenWrap.style.display = 'none';
+    return;
+  }
+  resumenWrap.style.display = 'block';
+
+  document.getElementById('portal-resumen-items').innerHTML = items.map(i=>`
+    <div class="resumen-row">
+      <span style="font-weight:600">${i.nombre}</span>
+      <span style="color:var(--texto-2)">${i.cantidad} × $${i.precioRep.toLocaleString('es-AR',{minimumFractionDigits:2})}</span>
+      <span style="font-weight:700;color:var(--horno)">$${i.subtotal.toLocaleString('es-AR',{minimumFractionDigits:2})}</span>
+    </div>`).join('');
+
+  document.getElementById('portal-total').textContent =
+    '$'+total.toLocaleString('es-AR',{minimumFractionDigits:2});
+  btnEnviar.disabled = false;
+  btnEnviar.textContent = `📦 Confirmar Pedido · $${total.toLocaleString('es-AR',{minimumFractionDigits:2})}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENVÍO DEL PEDIDO
+// ═══════════════════════════════════════════════════════════════
+async function enviarPedidoPortal(){
+  const items = catalogoLocal
+    .filter(p=>(cantidades[p.id]||0)>0)
+    .map(p=>({catId:p.id,nombre:p.nombre,sector:p.sector,precioLista:p.precio,precioRep:p.precioRep,cantidad:cantidades[p.id],subtotal:+(cantidades[p.id]*p.precioRep).toFixed(2)}));
+
+  if(!items.length){ alert('Agregá al menos un producto antes de confirmar.'); return; }
+
+  const total = items.reduce((s,i)=>s+i.subtotal,0);
+  const r = repartidorActual;
+  const nro = 'PREP-' + Date.now().toString().slice(-6);
+  const fecha = new Date().toISOString().split('T')[0];
+
+  const pedido = {
+    id: nro, repId: r.id, fecha, obs:'Desde portal repartidor',
+    items, total: +total.toFixed(2),
+    estado: 'Pendiente', stockDescontado: false,
+    fechaCreacion: new Date().toISOString()
+  };
+
+  const btnEnviar = document.getElementById('btn-enviar-pedido');
+  btnEnviar.disabled = true;
+  btnEnviar.textContent = '🔄 Enviando…';
+
+  let enviado = false;
+
+  // 1. Intentar guardar en el servidor (Apps Script)
+  if(SYNC_ACTIVO){
+    try{
+      // Bajamos la DB, agregamos el pedido, la subimos
+      const res = await fetch(`${SYNC_URL}?accion=cargarDBCompleta`);
+      const data = await res.json();
+      if(data.ok && data.db){
+        data.db.pedidosRepartidores = data.db.pedidosRepartidores||[];
+        data.db.pedidosRepartidores.unshift(pedido);
+        await fetch(SYNC_URL, {method:'POST', body:JSON.stringify({
+          accion:'guardarDBCompleta',
+          db: data.db,
+          guardadoPor: `Portal Repartidor — ${r.nombre} — ${new Date().toLocaleString('es-AR')}`
+        })});
+        enviado = true;
+      }
+    }catch(e){ /* fallback a localStorage */ }
+  }
+
+  // 2. Guardar también en localStorage local (para cuando abren la app en la misma máquina)
+  try{
+    const lsRaw = localStorage.getItem('panaderia_belen_v1');
+    if(lsRaw){
+      const db = JSON.parse(lsRaw);
+      db.pedidosRepartidores = db.pedidosRepartidores||[];
+      db.pedidosRepartidores.unshift(pedido);
+      localStorage.setItem('panaderia_belen_v1', JSON.stringify(db));
+      enviado = true;
+    }
+  }catch(e){}
+
+  if(enviado){
+    document.getElementById('portal-contenido').style.display = 'none';
+    document.getElementById('portal-confirmacion').style.display = 'block';
+    document.getElementById('conf-detalle').textContent =
+      `Pedido N° ${nro} · ${items.length} producto(s) · Total: $${total.toLocaleString('es-AR',{minimumFractionDigits:2})}`;
+  } else {
+    btnEnviar.disabled = false;
+    btnEnviar.textContent = `📦 Confirmar Pedido · $${total.toLocaleString('es-AR',{minimumFractionDigits:2})}`;
+    alert('No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.');
+  }
+}
+
+function nuevoPedidoPortal(){
+  cantidades = {};
+  document.getElementById('portal-confirmacion').style.display = 'none';
+  document.getElementById('portal-contenido').style.display = 'block';
+  mostrarPortal();
+}
+</script>
+</body>
+</html>

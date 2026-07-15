@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recepción de Remito — Panadería Belén</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --trigo: #C8860A; --trigo-lt: #F5E6C3; --trigo-dk: #8B5E08;
+    --horno: #2C1810; --corteza: #5C3D2E;
+    --miga: #FDF6E3; --miga-dk: #F5EDD4;
+    --vapor: #E8F4F0; --vapor-dk: #2D6A4F;
+    --alerta: #C0392B; --alerta-lt: #FDECEA;
+    --texto: #1A0F08; --texto-2: #5C4A3A; --borde: #DDD0B8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif; background: var(--miga); color: var(--texto);
+    min-height: 100vh; padding: 16px; font-size: 15px; line-height: 1.5;
+  }
+  .header {
+    background: linear-gradient(135deg, var(--horno) 0%, var(--corteza) 100%);
+    border-radius: 14px; padding: 20px; margin-bottom: 16px; text-align: center;
+  }
+  .header .brand { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 900; color: var(--trigo); }
+  .header .sub { color: rgba(255,255,255,.6); font-size: 12px; margin-top: 4px; }
+
+  .card { background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 14px; border: 1px solid var(--borde); box-shadow: 0 2px 10px rgba(44,24,16,.08); }
+  .card h3 { font-family: 'Playfair Display', serif; font-size: 16px; color: var(--horno); margin-bottom: 10px; }
+
+  .meta-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--miga-dk); font-size: 13px; }
+  .meta-row:last-child { border-bottom: none; }
+  .meta-label { color: var(--texto-2); }
+  .meta-val { font-weight: 600; }
+
+  .item-row {
+    display: flex; align-items: center; gap: 12px; padding: 14px 12px;
+    border: 2px solid var(--borde); border-radius: 10px; margin-bottom: 10px;
+    transition: all .15s; background: #fff;
+  }
+  .item-row.checked { background: var(--vapor); border-color: var(--vapor-dk); }
+  .item-row input[type="checkbox"] { width: 26px; height: 26px; accent-color: var(--vapor-dk); cursor: pointer; flex-shrink: 0; }
+  .item-info { flex: 1; }
+  .item-desc { font-weight: 700; font-size: 14px; }
+  .item-qty { font-size: 12px; color: var(--texto-2); margin-top: 2px; }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 11px; font-weight: 700; color: var(--texto-2); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+  .form-group input, .form-group textarea {
+    width: 100%; padding: 12px 14px; border: 1.5px solid var(--borde); border-radius: 8px;
+    font-size: 15px; font-family: 'Inter', sans-serif; outline: none;
+  }
+  .form-group input:focus, .form-group textarea:focus { border-color: var(--trigo); }
+  .form-group textarea { resize: vertical; min-height: 70px; }
+
+  .btn-confirm {
+    width: 100%; background: var(--vapor-dk); color: #fff; border: none;
+    padding: 16px; border-radius: 10px; font-size: 16px; font-weight: 700;
+    cursor: pointer; margin-top: 8px; font-family: 'Inter', sans-serif;
+  }
+  .btn-confirm:active { opacity: .85; }
+  .btn-confirm:disabled { background: var(--borde); color: var(--texto-2); }
+
+  .progress-summary {
+    text-align: center; padding: 10px; background: var(--trigo-lt); border-radius: 8px;
+    font-weight: 700; color: var(--trigo-dk); margin-bottom: 14px; font-size: 14px;
+  }
+
+  .estado-ya-confirmado {
+    text-align: center; padding: 30px 20px;
+  }
+  .estado-ya-confirmado .icon { font-size: 50px; margin-bottom: 12px; }
+  .estado-ya-confirmado h2 { font-family: 'Playfair Display', serif; color: var(--vapor-dk); margin-bottom: 8px; }
+  .estado-ya-confirmado p { color: var(--texto-2); font-size: 13px; }
+
+  .error-box { text-align: center; padding: 40px 20px; }
+  .error-box .icon { font-size: 50px; margin-bottom: 12px; }
+  .error-box h2 { font-family: 'Playfair Display', serif; color: var(--alerta); margin-bottom: 8px; }
+  .error-box p { color: var(--texto-2); font-size: 13px; }
+
+  .loading { text-align: center; padding: 60px 20px; color: var(--texto-2); }
+  .spinner {
+    width: 36px; height: 36px; border: 3px solid var(--borde); border-top-color: var(--trigo);
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 14px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">🥖 Panadería Belén</div>
+  <div class="sub">Recepción de Remito</div>
+</div>
+
+<div id="contenido">
+  <div class="loading">
+    <div class="spinner"></div>
+    <div>Buscando el remito…</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONFIGURACIÓN — Reemplazar con la URL de tu Apps Script
+// ═══════════════════════════════════════════════════════════════
+const SYNC_URL = "PEGAR_AQUI_TU_URL_DE_APPS_SCRIPT";
+
+// Tomar el N° de remito desde la URL: ?remito=REM-0001
+const params = new URLSearchParams(window.location.search);
+const nroRemito = params.get('remito');
+
+let remitoData = null;
+let checks = [];
+
+async function cargarRemito(){
+  const cont = document.getElementById('contenido');
+
+  if(SYNC_URL.includes('PEGAR_AQUI')){
+    cont.innerHTML = `<div class="error-box">
+      <div class="icon">⚙️</div>
+      <h2>Falta configurar el sistema</h2>
+      <p>El administrador todavía no conectó esta página con la base de datos. Avisale para que complete el último paso de instalación.</p>
+    </div>`;
+    return;
+  }
+
+  if(!nroRemito){
+    cont.innerHTML = `<div class="error-box">
+      <div class="icon">🔗</div>
+      <h2>Link incompleto</h2>
+      <p>Este link no tiene un número de remito válido. Pedile al remitente que te reenvíe el link completo.</p>
+    </div>`;
+    return;
+  }
+
+  try{
+    const res = await fetch(`${SYNC_URL}?accion=obtenerRemito&nro=${encodeURIComponent(nroRemito)}`);
+    const data = await res.json();
+
+    if(!data.ok){
+      cont.innerHTML = `<div class="error-box">
+        <div class="icon">❓</div>
+        <h2>Remito no encontrado</h2>
+        <p>No se encontró el remito ${nroRemito}. Verificá el link o pedile al remitente que lo vuelva a enviar.</p>
+      </div>`;
+      return;
+    }
+
+    remitoData = data;
+
+    if(data.estadoRecepcion === 'Recibido'){
+      mostrarYaConfirmado(data);
+      return;
+    }
+
+    mostrarFormulario(data);
+  }catch(err){
+    cont.innerHTML = `<div class="error-box">
+      <div class="icon">📡</div>
+      <h2>Sin conexión</h2>
+      <p>No se pudo conectar con el sistema. Revisá tu conexión a internet e intentá de nuevo.</p>
+    </div>`;
+  }
+}
+
+function mostrarYaConfirmado(data){
+  const cont = document.getElementById('contenido');
+  cont.innerHTML = `<div class="card">
+    <div class="estado-ya-confirmado">
+      <div class="icon">✅</div>
+      <h2>Remito ya confirmado</h2>
+      <p>Confirmado por <strong>${data.confirmadoPor}</strong><br>el ${data.fechaConfirmacion}</p>
+      ${data.observacionesRecepcion ? `<p style="margin-top:10px;font-style:italic">"${data.observacionesRecepcion}"</p>` : ''}
+    </div>
+  </div>`;
+}
+
+function mostrarFormulario(data){
+  const r = data.remito;
+  checks = r.items.map(()=>false);
+
+  const cont = document.getElementById('contenido');
+  cont.innerHTML = `
+    <div class="card">
+      <h3>📑 Remito ${r.nro}</h3>
+      <div class="meta-row"><span class="meta-label">Fecha</span><span class="meta-val">${r.fecha.split('-').reverse().join('/')}</span></div>
+      <div class="meta-row"><span class="meta-label">Origen</span><span class="meta-val">${r.origen}</span></div>
+      <div class="meta-row"><span class="meta-label">Destino</span><span class="meta-val">${r.destino}</span></div>
+      <div class="meta-row"><span class="meta-label">Responsable envío</span><span class="meta-val">${r.responsable}</span></div>
+    </div>
+
+    <div class="card">
+      <h3>📦 Tildá lo que recibiste</h3>
+      <div class="progress-summary" id="progress-summary">0 de ${r.items.length} confirmados</div>
+      <div id="items-list"></div>
+    </div>
+
+    <div class="card">
+      <div class="form-group">
+        <label>Tu nombre *</label>
+        <input type="text" id="confirmadoPor" placeholder="Quién está recibiendo">
+      </div>
+      <div class="form-group">
+        <label>Observaciones (opcional)</label>
+        <textarea id="observaciones" placeholder="Ej: Faltó 1 bolsa de harina, llegó un paquete dañado…"></textarea>
+      </div>
+      <button class="btn-confirm" id="btn-confirmar" onclick="confirmarRecepcion()">✅ Confirmar Recepción</button>
+    </div>
+  `;
+
+  const list = document.getElementById('items-list');
+  r.items.forEach((item, idx)=>{
+    const div = document.createElement('div');
+    div.className = 'item-row';
+    div.id = 'item-' + idx;
+    div.innerHTML = `
+      <input type="checkbox" id="chk-${idx}" onchange="toggleItem(${idx})">
+      <div class="item-info">
+        <div class="item-desc">${item.desc}</div>
+        <div class="item-qty">${item.cantidad} ${item.uom}</div>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function toggleItem(idx){
+  checks[idx] = document.getElementById('chk-'+idx).checked;
+  const row = document.getElementById('item-'+idx);
+  row.classList.toggle('checked', checks[idx]);
+
+  const confirmados = checks.filter(c=>c).length;
+  const total = checks.length;
+  document.getElementById('progress-summary').textContent = `${confirmados} de ${total} confirmados`;
+}
+
+async function confirmarRecepcion(){
+  const nombre = document.getElementById('confirmadoPor').value.trim();
+  if(!nombre){
+    alert('Ingresá tu nombre antes de confirmar.');
+    return;
+  }
+
+  const confirmados = checks.filter(c=>c).length;
+  const total = checks.length;
+  const obs = document.getElementById('observaciones').value.trim();
+
+  let estadoFinal = 'Recibido';
+  if(confirmados < total){
+    if(!confirm(`Marcaste ${confirmados} de ${total} ítems. ¿Confirmar de todas formas? (Quedará registrado como recepción parcial)`)){
+      return;
+    }
+    estadoFinal = 'Recibido con faltantes';
+  }
+
+  const btn = document.getElementById('btn-confirmar');
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+
+  try{
+    const res = await fetch(SYNC_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        accion: 'confirmarRecepcion',
+        nro: nroRemito,
+        itemsConfirmados: checks,
+        estadoRecepcion: estadoFinal,
+        confirmadoPor: nombre,
+        observaciones: obs
+      })
+    });
+    const data = await res.json();
+
+    if(data.ok){
+      document.getElementById('contenido').innerHTML = `<div class="card">
+        <div class="estado-ya-confirmado">
+          <div class="icon">✅</div>
+          <h2>¡Recepción confirmada!</h2>
+          <p>Gracias ${nombre}. Quedó registrado con ${confirmados} de ${total} ítems confirmados.</p>
+        </div>
+      </div>`;
+    } else {
+      throw new Error(data.error || 'Error desconocido');
+    }
+  }catch(err){
+    btn.disabled = false;
+    btn.textContent = '✅ Confirmar Recepción';
+    alert('No se pudo enviar la confirmación. Verificá tu conexión e intentá de nuevo.');
+  }
+}
+
+cargarRemito();
+</script>
+</body>
+</html>

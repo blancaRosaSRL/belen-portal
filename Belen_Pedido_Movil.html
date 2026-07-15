@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hacer un Pedido — Panadería Belén</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --trigo: #C8860A; --trigo-lt: #F5E6C3; --trigo-dk: #8B5E08;
+    --horno: #2C1810; --corteza: #5C3D2E;
+    --miga: #FDF6E3; --miga-dk: #F5EDD4;
+    --vapor: #E8F4F0; --vapor-dk: #2D6A4F;
+    --alerta: #C0392B; --alerta-lt: #FDECEA;
+    --naranja: #E67E22; --naranja-lt: #FEF0E3;
+    --texto: #1A0F08; --texto-2: #5C4A3A; --borde: #DDD0B8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif; background: var(--miga); color: var(--texto);
+    min-height: 100vh; padding: 16px; font-size: 15px; line-height: 1.5;
+  }
+  .header {
+    background: linear-gradient(135deg, var(--horno) 0%, var(--corteza) 100%);
+    border-radius: 14px; padding: 20px; margin-bottom: 16px; text-align: center;
+  }
+  .header .brand { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 900; color: var(--trigo); }
+  .header .sub { color: rgba(255,255,255,.6); font-size: 12px; margin-top: 4px; }
+
+  .card { background: #fff; border-radius: 12px; padding: 18px; margin-bottom: 14px; border: 1px solid var(--borde); box-shadow: 0 2px 10px rgba(44,24,16,.08); }
+
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 11px; font-weight: 700; color: var(--texto-2); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 12px 14px; border: 1.5px solid var(--borde); border-radius: 8px;
+    font-size: 15px; font-family: 'Inter', sans-serif; outline: none; background: #fff;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--trigo); }
+  .form-group textarea { resize: vertical; min-height: 70px; }
+
+  /* Fuente del pedido: catálogo vs materia prima */
+  .source-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .source-tab {
+    flex: 1; padding: 12px 8px; border: 2px solid var(--borde); border-radius: 10px;
+    background: #fff; text-align: center; cursor: pointer; font-size: 12px; font-weight: 700;
+    color: var(--texto-2); transition: all .15s;
+  }
+  .source-tab.active { border-color: var(--trigo); background: var(--trigo-lt); color: var(--trigo-dk); }
+
+  /* Tabs de sector dentro del catálogo */
+  .sector-scroll { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 12px; -webkit-overflow-scrolling: touch; }
+  .sector-pill {
+    flex-shrink: 0; padding: 8px 14px; border-radius: 20px; border: 1.5px solid var(--borde);
+    background: #fff; font-size: 12px; font-weight: 600; color: var(--texto-2); cursor: pointer;
+    white-space: nowrap; transition: all .15s;
+  }
+  .sector-pill.active { background: var(--horno); border-color: var(--horno); color: #fff; }
+
+  .producto-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; margin-bottom: 14px; }
+  .producto-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; border: 1.5px solid var(--borde); border-radius: 10px; background: #fff;
+  }
+  .producto-item.tercerizado { border-left: 4px solid var(--naranja); }
+  .producto-item .pi-info { flex: 1; min-width: 0; }
+  .producto-item .pi-nombre { font-weight: 700; font-size: 13px; }
+  .producto-item .pi-meta { font-size: 11px; color: var(--texto-2); }
+  .producto-item .pi-qty {
+    width: 64px; padding: 8px; border: 1.5px solid var(--borde); border-radius: 8px;
+    font-size: 14px; text-align: center;
+  }
+
+  .carrito-resumen {
+    background: var(--trigo-lt); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+    font-size: 13px; color: var(--trigo-dk); font-weight: 600;
+  }
+
+  .item-libre-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .item-libre-row input[type="text"] { flex: 2; }
+  .item-libre-row input[type="number"] { flex: 1; }
+  .btn-quitar { background: var(--alerta-lt); color: var(--alerta); border: none; border-radius: 8px; padding: 0 12px; font-weight: 700; cursor: pointer; }
+
+  .btn-enviar {
+    width: 100%; background: var(--trigo); color: #fff; border: none;
+    padding: 16px; border-radius: 10px; font-size: 16px; font-weight: 700;
+    cursor: pointer; font-family: 'Inter', sans-serif;
+  }
+  .btn-enviar:disabled { background: var(--borde); color: var(--texto-2); }
+  .btn-secundario {
+    width: 100%; background: #fff; color: var(--texto-2); border: 1.5px solid var(--borde);
+    padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 8px;
+  }
+
+  .exito-box { text-align: center; padding: 30px 20px; }
+  .exito-box .icon { font-size: 50px; margin-bottom: 12px; }
+  .exito-box h2 { font-family: 'Playfair Display', serif; color: var(--vapor-dk); margin-bottom: 8px; }
+  .exito-box p { color: var(--texto-2); font-size: 13px; }
+  .btn-nuevo {
+    margin-top: 16px; background: var(--horno); color: #fff; border: none;
+    padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+
+  .error-box { text-align: center; padding: 40px 20px; }
+  .error-box .icon { font-size: 50px; margin-bottom: 12px; }
+  .error-box h2 { font-family: 'Playfair Display', serif; color: var(--alerta); margin-bottom: 8px; }
+  .error-box p { color: var(--texto-2); font-size: 13px; }
+
+  .empty-hint { text-align: center; padding: 20px; color: var(--texto-2); font-size: 13px; }
+  .spinner-mini { width: 22px; height: 22px; border: 3px solid var(--borde); border-top-color: var(--trigo); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">🥖 Panadería Belén</div>
+  <div class="sub">Solicitar Mercadería</div>
+</div>
+
+<div id="contenido"></div>
+
+<script>
+const SYNC_URL = "PEGAR_AQUI_TU_URL_DE_APPS_SCRIPT";
+
+const SECTORES = [
+  {nombre:"Panadería", icono:"🥖"},
+  {nombre:"Pastelería", icono:"🎂"},
+  {nombre:"Repostería", icono:"🍰"},
+  {nombre:"Sandwichería", icono:"🥪"},
+  {nombre:"Frituras", icono:"🍩"},
+  {nombre:"Tercerizado", icono:"🚚"},
+];
+
+let fuenteActiva = 'catalogo'; // 'catalogo' | 'materia'
+let sectorActivo = 'Panadería';
+let catalogoRemoto = [];
+let carrito = {}; // { id_o_nombre: {nombre, cantidad, origen} }
+let itemsLibres = [{nombre:'', cantidad:''}];
+let cargando = true;
+
+async function cargarCatalogo(){
+  if(SYNC_URL.includes('PEGAR_AQUI')) { cargando=false; render(); return; }
+  try{
+    const res = await fetch(`${SYNC_URL}?accion=listarCatalogo`);
+    const data = await res.json();
+    if(data.ok) catalogoRemoto = data.catalogo.filter(p=>p.estado==='Activo');
+  }catch(err){ /* si falla, igual se puede pedir materia prima en texto libre */ }
+  cargando = false;
+  render();
+}
+
+function render(){
+  const cont = document.getElementById('contenido');
+
+  if(SYNC_URL.includes('PEGAR_AQUI')){
+    cont.innerHTML = `<div class="card"><div class="error-box">
+      <div class="icon">⚙️</div>
+      <h2>Falta configurar el sistema</h2>
+      <p>El administrador todavía no conectó esta página con la base de datos. Avisale para que complete el último paso de instalación.</p>
+    </div></div>`;
+    return;
+  }
+
+  cont.innerHTML = `
+    <div class="card">
+      <div class="source-tabs">
+        <div class="source-tab ${fuenteActiva==='catalogo'?'active':''}" onclick="cambiarFuente('catalogo')">🗂️ Productos del Catálogo</div>
+        <div class="source-tab ${fuenteActiva==='materia'?'active':''}" onclick="cambiarFuente('materia')">🌾 Materia Prima</div>
+      </div>
+      <div id="fuente-content"></div>
+    </div>
+
+    <div class="card" id="carrito-card" style="display:none">
+      <div class="carrito-resumen" id="carrito-resumen"></div>
+    </div>
+
+    <div class="card">
+      <div class="form-group">
+        <label>Sector o sucursal que pide</label>
+        <input type="text" id="sector-solicitante" placeholder="Ej: Salón de ventas, Sucursal Centro…">
+      </div>
+      <div class="form-group">
+        <label>Tu nombre *</label>
+        <input type="text" id="solicitante" placeholder="Quién está pidiendo">
+      </div>
+      <div class="form-group">
+        <label>Observaciones (opcional)</label>
+        <textarea id="obs" placeholder="Urgencia, detalles adicionales…"></textarea>
+      </div>
+      <button class="btn-enviar" id="btn-enviar" onclick="enviarPedido()">📤 Enviar Pedido</button>
+    </div>
+  `;
+
+  renderFuente();
+  actualizarResumenCarrito();
+}
+
+function cambiarFuente(fuente){
+  fuenteActiva = fuente;
+  render();
+}
+
+function renderFuente(){
+  const cont = document.getElementById('fuente-content');
+  if(fuenteActiva==='catalogo'){
+    renderVistaCatalogo(cont);
+  } else {
+    renderVistaMateriaPrima(cont);
+  }
+}
+
+function renderVistaCatalogo(cont){
+  if(cargando){
+    cont.innerHTML = `<div class="spinner-mini"></div><div class="empty-hint">Cargando catálogo…</div>`;
+    return;
+  }
+  if(catalogoRemoto.length===0){
+    cont.innerHTML = `<div class="empty-hint">Todavía no hay productos cargados en el catálogo, o falta sincronizarlo desde la app principal. Probá pedir por "Materia Prima" con texto libre mientras tanto.</div>`;
+    return;
+  }
+
+  const sectoresConProductos = SECTORES.filter(s => catalogoRemoto.some(p=>p.sector===s.nombre));
+
+  let html = `<div class="sector-scroll">`;
+  sectoresConProductos.forEach(s=>{
+    html += `<div class="sector-pill ${s.nombre===sectorActivo?'active':''}" onclick="cambiarSector('${s.nombre}')">${s.icono} ${s.nombre}</div>`;
+  });
+  html += `</div>`;
+
+  const productosSector = catalogoRemoto.filter(p=>p.sector===sectorActivo);
+  html += `<div class="producto-list">`;
+  if(productosSector.length===0){
+    html += `<div class="empty-hint">Sin productos en este sector.</div>`;
+  } else {
+    productosSector.forEach(p=>{
+      const key = 'cat-' + p.id;
+      const cantidadActual = carrito[key] ? carrito[key].cantidad : '';
+      const tercClass = p.origen==='Tercerizado' ? 'tercerizado' : '';
+      html += `<div class="producto-item ${tercClass}">
+        <div class="pi-info">
+          <div class="pi-nombre">${p.origen==='Tercerizado'?'🚚 ':''}${p.nombre}</div>
+          <div class="pi-meta">$${Number(p.precio||0).toLocaleString('es-AR',{minimumFractionDigits:2})} / ${p.uom||'Unidad'}</div>
+        </div>
+        <input type="number" class="pi-qty" placeholder="0" min="0" value="${cantidadActual}"
+          onchange="actualizarCarritoCatalogo('${key}','${p.nombre.replace(/'/g,"\\'")}',this.value)">
+      </div>`;
+    });
+  }
+  html += `</div>`;
+
+  cont.innerHTML = html;
+}
+
+function cambiarSector(sector){
+  sectorActivo = sector;
+  renderFuente();
+}
+
+function actualizarCarritoCatalogo(key, nombre, valor){
+  const cantidad = parseFloat(valor)||0;
+  if(cantidad>0){
+    carrito[key] = {nombre, cantidad, origen:'catalogo'};
+  } else {
+    delete carrito[key];
+  }
+  actualizarResumenCarrito();
+}
+
+function renderVistaMateriaPrima(cont){
+  let html = `<div class="empty-hint" style="text-align:left;padding:4px 0 12px">Escribí el insumo que necesitás y la cantidad. Podés agregar varios.</div>`;
+  html += `<div id="items-libres-list">`;
+  itemsLibres.forEach((it,idx)=>{
+    html += `<div class="item-libre-row">
+      <input type="text" placeholder="Ej: Harina 000, Manteca…" value="${it.nombre}" oninput="actualizarItemLibre(${idx},'nombre',this.value)">
+      <input type="number" placeholder="Cant." min="0" value="${it.cantidad}" oninput="actualizarItemLibre(${idx},'cantidad',this.value)">
+      <button class="btn-quitar" onclick="quitarItemLibre(${idx})">✕</button>
+    </div>`;
+  });
+  html += `</div>`;
+  html += `<button class="btn-secundario" onclick="agregarItemLibre()">+ Agregar otro insumo</button>`;
+  cont.innerHTML = html;
+}
+
+function actualizarItemLibre(idx, campo, valor){
+  itemsLibres[idx][campo] = campo==='cantidad' ? valor : valor;
+  actualizarResumenCarrito();
+}
+
+function agregarItemLibre(){
+  itemsLibres.push({nombre:'', cantidad:''});
+  renderFuente();
+}
+
+function quitarItemLibre(idx){
+  itemsLibres.splice(idx,1);
+  if(itemsLibres.length===0) itemsLibres.push({nombre:'', cantidad:''});
+  renderFuente();
+  actualizarResumenCarrito();
+}
+
+function actualizarResumenCarrito(){
+  const card = document.getElementById('carrito-card');
+  const resumen = document.getElementById('carrito-resumen');
+  if(!card || !resumen) return;
+
+  const itemsCatalogo = Object.values(carrito);
+  const itemsMateria = itemsLibres.filter(it=>it.nombre.trim() && parseFloat(it.cantidad)>0);
+  const total = itemsCatalogo.length + itemsMateria.length;
+
+  if(total===0){ card.style.display='none'; return; }
+
+  card.style.display='block';
+  const partes = [];
+  if(itemsCatalogo.length>0) partes.push(`${itemsCatalogo.length} producto(s) del catálogo`);
+  if(itemsMateria.length>0) partes.push(`${itemsMateria.length} insumo(s) de materia prima`);
+  resumen.innerHTML = `🛒 ${partes.join(' + ')} en tu pedido`;
+}
+
+async function enviarPedido(){
+  const sector = document.getElementById('sector-solicitante').value.trim();
+  const solicitante = document.getElementById('solicitante').value.trim();
+  const obs = document.getElementById('obs').value.trim();
+
+  const itemsCatalogo = Object.values(carrito);
+  const itemsMateria = itemsLibres.filter(it=>it.nombre.trim() && parseFloat(it.cantidad)>0)
+    .map(it=>({nombre: it.nombre.trim(), cantidad: parseFloat(it.cantidad)}));
+
+  const totalItems = itemsCatalogo.length + itemsMateria.length;
+
+  if(totalItems===0){
+    alert('Agregá al menos un producto o insumo antes de enviar.');
+    return;
+  }
+  if(!solicitante){
+    alert('Ingresá tu nombre antes de enviar.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-enviar');
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+
+  try{
+    for(const it of itemsCatalogo){
+      await fetch(SYNC_URL, {
+        method: 'POST',
+        body: JSON.stringify({ accion:'crearPedido', pedido: { tipo:'Producto Terminado', item: it.nombre, cantidad: it.cantidad, sector, solicitadoPor: solicitante, obs } })
+      });
+    }
+    for(const it of itemsMateria){
+      await fetch(SYNC_URL, {
+        method: 'POST',
+        body: JSON.stringify({ accion:'crearPedido', pedido: { tipo:'Materia Prima', item: it.nombre, cantidad: it.cantidad, sector, solicitadoPor: solicitante, obs } })
+      });
+    }
+
+    document.getElementById('contenido').innerHTML = `<div class="card">
+      <div class="exito-box">
+        <div class="icon">✅</div>
+        <h2>¡Pedido enviado!</h2>
+        <p>Gracias ${solicitante}. Tu pedido con ${totalItems} ítem(s) ya está visible en el sistema de Panadería Belén.</p>
+        <button class="btn-nuevo" onclick="location.reload()">Hacer otro pedido</button>
+      </div>
+    </div>`;
+  }catch(err){
+    btn.disabled = false;
+    btn.textContent = '📤 Enviar Pedido';
+    alert('No se pudo enviar el pedido. Verificá tu conexión e intentá de nuevo.');
+  }
+}
+
+cargarCatalogo();
+</script>
+</body>
+</html>
