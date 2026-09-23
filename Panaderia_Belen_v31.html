@@ -5188,7 +5188,7 @@ function importarBackupExterno(input){
         'gastos','mixVentas','repartidores','pedidosRepartidores','pagosRepartidores',
         'empleados','configCargas','auditoria','combos','packaging'];
       campos.forEach(c=>{ if(datos[c] !== undefined) DB[c] = datos[c]; });
-      guardarDB();
+      guardarEnStorage();
       cerrarModal('modal-backups');
       toast(`✅ Backup importado correctamente desde "${file.name}"`, 'success');
       setTimeout(()=>location.reload(), 1200);
