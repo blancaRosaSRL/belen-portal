@@ -14161,19 +14161,34 @@ async function sincronizarNube(silencioso=false){
     CLOUD_SYNC_ARRAYS.forEach(col=>{ if(dbMergeada[col]) DB[col]=dbMergeada[col]; });
     guardarEnStorage();
 
-    // 4. Subir versión fusionada
+    // 4. Subir versión fusionada usando fusionarDB (server-side merge)
+    // El servidor mezcla con lo que tienen otras PCs — nunca pisa nada
     const payload={};
     CLOUD_SYNC_ARRAYS.forEach(k=>{ payload[k]=DB[k]; });
     payload.configCargas = DB.configCargas;
     const resPost = await fetch(SYNC_URL,{
       method:'POST',
-      body: JSON.stringify({ accion:'guardarDBCompleta', db:payload,
-        guardadoPor:`${usuarioActual?.nombre||'?'} · sync-v3 · ${new Date().toLocaleString('es-AR')}`,
-        metadata:{fusionados,conflictos,cliente:usuarioActual?.nombre}
+      body: JSON.stringify({
+        accion:'fusionarDB',
+        db: payload,
+        guardadoPor:`${usuarioActual?.nombre||'?'} · sync-v4 · ${new Date().toLocaleString('es-AR')}`,
+        usuario: usuarioActual?.nombre||'?'
       })
     });
     const dataPost = await resPost.json();
     if(!dataPost.ok) throw new Error(dataPost.error);
+
+    // Si el servidor devuelve la DB fusionada final, aplicarla localmente
+    // Así recibimos también lo que cargaron otras PCs en este mismo sync
+    if(dataPost.db){
+      const dbFinal = dataPost.db;
+      CLOUD_SYNC_ARRAYS.forEach(col=>{
+        if(Array.isArray(dbFinal[col]) && dbFinal[col].length > 0){
+          DB[col] = dbFinal[col];
+        }
+      });
+      guardarEnStorage();
+    }
 
     // 5. Limpiar cola
     limpiarQueue();
