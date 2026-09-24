@@ -6234,9 +6234,12 @@ function calcularRendimientoCompleto(rec){
   const porciones = Math.floor(Number(rec.porciones)||0);
   const modoPorciones = porciones > 0;
 
+  // En modo peso: calcular cuántas piezas salen (puede ser fracción para costo proporcional)
+  // Si pesoPieza > peso total del lote, calculamos proporcionalmente (ej: costo por kg)
+  const piezasExactas = pesoPieza > 0 ? (pesoKg * 1000 / pesoPieza) : 0;
   const piezas = modoPorciones
     ? porciones
-    : (pesoPieza > 0 ? Math.floor(pesoKg*1000 / pesoPieza) : 0);
+    : Math.floor(piezasExactas);
 
   // Peso crudo de cada pieza/porción: el ingresado, o el deducido del lote
   const pesoPorcionCruda = modoPorciones
@@ -6245,7 +6248,11 @@ function calcularRendimientoCompleto(rec){
   const pesoFinalPieza = pesoPorcionCruda > 0 ? pesoPorcionCruda * (1 - merma/100) : 0;
   const tapas = Math.max(2, Math.floor(Number(rec.tapasAlfajor)||2));
   const alfajores = (rec.esAlfajor && piezas > 0) ? Math.floor(piezas / tapas) : 0;
-  const costoUnidad = piezas > 0 ? costo/piezas : 0;
+  // Costo proporcional: si pesoPieza > lote, calcula cuánto cuesta esa porción de peso
+  // aunque no salga una pieza entera (ej: costo por kg de crema)
+  const costoUnidad = modoPorciones
+    ? (piezas > 0 ? costo/piezas : 0)
+    : (pesoPieza > 0 && pesoKg > 0 ? costo * (pesoPieza / (pesoKg * 1000)) : 0);
   const costoAlfajor = alfajores > 0 ? costo/alfajores : 0;
   const margen = Math.max(0, Number(rec.margenPct)||0);
   // El precio sugerido aplica el margen sobre el costo del producto final:
@@ -6305,13 +6312,24 @@ function refrescarRendimientoReceta(recId){
   if(!rec) return;
   const c = calcularRendimientoCompleto(rec);
   const set = (id, txt)=>{ const el = document.getElementById(id); if(el) el.textContent = txt; };
-  set('rend-piezas-'+recId, c.piezas > 0 ? fmtN(c.piezas) : '—');
-  set('rend-lbl-piezas-'+recId, c.modoPorciones ? '🍰 Porciones del lote' : '🥖 Piezas a obtener');
-  set('rend-lbl-costo-'+recId, '💰 Costo por ' + (c.modoPorciones ? 'porción' : 'unidad'));
-  set('rend-pesofinal-'+recId, c.pesoPorcionCruda > 0
-    ? `≈ ${fmtN(c.pesoPorcionCruda)} g c/u${c.pesoFinalPieza>0 && c.pesoFinalPieza!==c.pesoPorcionCruda?` · ${fmtN(c.pesoFinalPieza)} g cocida`:''}`
-    : '');
-  set('rend-costo-'+recId, c.piezas > 0 ? fmt$(c.costoUnidad) : '—');
+  // Detectar modo "costo por peso" (pesoPieza ingresado, puede superar el lote)
+  const modoPeso = !c.modoPorciones && (rec.pesoPieza||0) > 0;
+  const pesoKgTotal = pesoTotalReceta(rec);
+  const superaLote = modoPeso && (rec.pesoPieza||0) > pesoKgTotal * 1000;
+  if(superaLote){
+    set('rend-piezas-'+recId, '—');
+    set('rend-lbl-piezas-'+recId, '🥖 Piezas a obtener');
+    set('rend-lbl-costo-'+recId, `💰 Costo por ${fmtN(rec.pesoPieza)} g`);
+    set('rend-pesofinal-'+recId, '');
+  } else {
+    set('rend-piezas-'+recId, c.piezas > 0 ? fmtN(c.piezas) : '—');
+    set('rend-lbl-piezas-'+recId, c.modoPorciones ? '🍰 Porciones del lote' : '🥖 Piezas a obtener');
+    set('rend-lbl-costo-'+recId, '💰 Costo por ' + (c.modoPorciones ? 'porción' : 'unidad'));
+    set('rend-pesofinal-'+recId, c.pesoPorcionCruda > 0
+      ? `≈ ${fmtN(c.pesoPorcionCruda)} g c/u${c.pesoFinalPieza>0 && c.pesoFinalPieza!==c.pesoPorcionCruda?` · ${fmtN(c.pesoFinalPieza)} g cocida`:''}`
+      : '');
+  }
+  set('rend-costo-'+recId, fmt$(c.costoUnidad));
   set('rend-precio-'+recId, c.precioSugerido > 0 ? fmt$(c.precioSugerido) : '—');
   set('rend-alfajores-'+recId, c.alfajores > 0 ? fmtN(c.alfajores) : '—');
   set('rend-costoalf-'+recId, c.alfajores > 0 ? fmt$(c.costoAlfajorTotal||c.costoAlfajor) : '—');
