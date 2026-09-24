@@ -2793,6 +2793,7 @@
                 <option value="5">5% — Tasa reducida</option>
                 <option value="10.5">10.5% — Tasa reducida (alimentos, medicamentos)</option>
                 <option value="21" selected>21% — Tasa general</option>
+                <option value="26">26% — Tasa especial</option>
                 <option value="27">27% — Tasa incrementada (servicios públicos)</option>
               </select>
             </div>
@@ -2912,6 +2913,7 @@
                 <option value="5">5% — Tasa reducida</option>
                 <option value="10.5">10.5% — Tasa reducida (alimentos, medicamentos)</option>
                 <option value="21" selected>21% — Tasa general</option>
+                <option value="26">26% — Tasa especial</option>
                 <option value="27">27% — Tasa incrementada (servicios públicos)</option>
               </select>
             </div>
@@ -3583,6 +3585,7 @@
               <option value="5">5% — Tasa reducida</option>
               <option value="10.5">10.5% — Tasa reducida (alimentos)</option>
               <option value="21">21% — Tasa general</option>
+              <option value="26">26% — Tasa especial</option>
               <option value="27">27% — Tasa incrementada</option>
             </select>
           </div>
@@ -3986,7 +3989,8 @@
                   <option value="5">5% — Tasa reducida</option>
                   <option value="10.5">10.5% — Tasa reducida (alimentos, medicamentos)</option>
                   <option value="21" selected>21% — Tasa general</option>
-                  <option value="27">27% — Tasa incrementada (servicios públicos)</option>
+                  <option value="26">26% — Tasa especial</option>
+                <option value="27">27% — Tasa incrementada (servicios públicos)</option>
                 </select>
               </div>
               <div>
@@ -6311,6 +6315,12 @@ function refrescarRendimientoReceta(recId){
   set('rend-precio-'+recId, c.precioSugerido > 0 ? fmt$(c.precioSugerido) : '—');
   set('rend-alfajores-'+recId, c.alfajores > 0 ? fmtN(c.alfajores) : '—');
   set('rend-costoalf-'+recId, c.alfajores > 0 ? fmt$(c.costoAlfajorTotal||c.costoAlfajor) : '—');
+  const _mo = calcularCostoMOReceta(rec);
+  const _cpkg = costoPackagingPorReceta(recId);
+  const _und = rec.esAlfajor ? c.alfajores : c.piezas;
+  const _tot = (rec.esAlfajor ? c.costoAlfajorTotal : c.costoUnidadTotal) + (_und>0 ? _mo/_und : 0) + _cpkg;
+  set('rend-total-unidad-'+recId, _und > 0 ? fmt$(_tot) : '—');
+  set('rend-lbl-total-'+recId, '💰 COSTO TOTAL POR ' + (rec.esAlfajor ? 'ALFAJOR' : 'UNIDAD'));
 }
 
 function renderRecetas(){
@@ -6466,8 +6476,8 @@ function renderRecetas(){
                 <span style="font-weight:700">${fmt$(cpkg)}</span>
               </div>`:''})()}
               <div style="display:flex;justify-content:space-between;border-top:1.5px solid var(--borde);margin-top:4px;padding-top:4px;font-weight:800;color:var(--trigo-dk)">
-                <span>💰 COSTO TOTAL POR ${r.esAlfajor?'ALFAJOR':'UNIDAD'}</span>
-                <span>${(()=>{const mo=calcularCostoMOReceta(r); const cpkg=costoPackagingPorReceta(r.id); const und=r.esAlfajor?calc.alfajores:calc.piezas; const tot=(r.esAlfajor?calc.costoAlfajorTotal:calc.costoUnidadTotal)+(und>0?mo/und:0)+cpkg; return fmt$(tot);})()}</span>
+                <span id="rend-lbl-total-${r.id}">💰 COSTO TOTAL POR ${r.esAlfajor?'ALFAJOR':'UNIDAD'}</span>
+                <span id="rend-total-unidad-${r.id}">${(()=>{const mo=calcularCostoMOReceta(r); const cpkg=costoPackagingPorReceta(r.id); const und=r.esAlfajor?calc.alfajores:calc.piezas; const tot=(r.esAlfajor?calc.costoAlfajorTotal:calc.costoUnidadTotal)+(und>0?mo/und:0)+cpkg; return fmt$(tot);})()}</span>
               </div>
             </div>
           </div>`:''}
