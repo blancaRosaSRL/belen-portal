@@ -15687,6 +15687,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
   .kx-precio-btn{border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:transform .1s, box-shadow .1s}
   .kx-precio-btn:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(44,24,16,.18)}
   .kx-delta{font-size:11px;font-weight:700;margin-top:2px}
+  .kx-graf{padding:6px 14px 14px;color:var(--texto)}
   .kx-cierre-banner{padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
   @media print{ #page-kardex .toolbar, #page-kardex .pedidos-rep-tabs{display:none!important} }
 </style>
@@ -16901,6 +16902,149 @@ function kxTotalizar(p, filas){
     motivos, totales:T };
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 6c. GRÁFICOS (SVG propio: funcionan sin internet, en modo oscuro y en el PDF)
+// ═══════════════════════════════════════════════════════════════════
+const KX_COLORES = ['#C8922A','#5B8DEF','#E0703C','#5FA85F','#9B6BC8','#D4B24C','#3FA7A7','#C75B7A','#8C7B6B','#7A9CC6'];
+const KX_COL_PPP = '#E8A838', KX_COL_PEPS = '#5B8DEF', KX_COL_PERD = '#D9534F', KX_COL_REC = '#8FB98F';
+function kxFmtCorto(v){
+  v = Number(v)||0;
+  const a = Math.abs(v), sg = v<0?'-':'';
+  if(a >= 1e6) return sg+'$'+(a/1e6).toLocaleString('es-AR',{maximumFractionDigits:1})+' M';
+  if(a >= 1e3) return sg+'$'+(a/1e3).toLocaleString('es-AR',{maximumFractionDigits:0})+' k';
+  return sg+'$'+a.toLocaleString('es-AR',{maximumFractionDigits:0});
+}
+function kxEscalaMax(v){
+  if(!(v > 0)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), n = v/e;
+  return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10)*e;
+}
+function kxCorta(t, n){ t = String(t||''); return t.length>n ? t.slice(0,n-1)+'…' : t; }
+
+// Barras agrupadas. grupos: ['Consumo',...]; series: [{nombre, color, valores:[...]}]; opt.linea: {nombre,color,valores,fmt}
+function kxSvgBarras(grupos, series, opt){
+  opt = opt || {};
+  const W = 640, H = 300, L = 62, R = opt.linea ? 50 : 14, T = 40, B = 52;
+  const pw = W-L-R, ph = H-T-B;
+  const maxV = kxEscalaMax(Math.max(1, ...series.flatMap(x=>x.valores.map(v=>Math.max(0,Number(v)||0)))));
+  const gw = pw / grupos.length, bw = Math.min(56, (gw*0.8)/series.length);
+  const y = v => T + ph - (Math.max(0,Number(v)||0)/maxV)*ph;
+  let g = '';
+  for(let i=0;i<=4;i++){
+    const v = maxV*i/4, yy = y(v);
+    g += `<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="currentColor" stroke-opacity=".12"/>`;
+    g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity=".65">${kxFmtCorto(v)}</text>`;
+  }
+  grupos.forEach((gr,i)=>{
+    const x0 = L + gw*i + (gw - bw*series.length)/2;
+    series.forEach((se,j)=>{
+      const v = Number(se.valores[i])||0, x = x0 + j*bw, yy = y(v), h = T+ph-yy;
+      g += `<rect x="${x+2}" y="${yy}" width="${Math.max(1,bw-4)}" height="${Math.max(0,h)}" rx="5" fill="${se.color}"><title>${kxEsc(se.nombre)} · ${kxEsc(gr)}: ${fmt$(v)}</title></rect>`;
+      if(opt.etiquetas !== false) g += `<text x="${x+bw/2}" y="${yy-6}" text-anchor="middle" font-size="${series.length>2?9:11}" font-weight="700" fill="currentColor">${kxFmtCorto(v)}</text>`;
+    });
+    g += `<text x="${L+gw*i+gw/2}" y="${T+ph+18}" text-anchor="middle" font-size="11.5" fill="currentColor" fill-opacity=".85">${kxEsc(kxCorta(gr,18))}</text>`;
+  });
+  if(opt.linea){
+    const ln = opt.linea, maxL = kxEscalaMax(Math.max(1, ...ln.valores));
+    const yl = v => T + ph - (Math.max(0,v)/maxL)*ph;
+    const pts = ln.valores.map((v,i)=>[L+gw*i+gw/2, yl(v)]);
+    if(pts.length > 1) g += `<polyline points="${pts.map(q=>q.join(',')).join(' ')}" fill="none" stroke="${ln.color}" stroke-width="2.5"/>`;
+    pts.forEach((q,i)=>{ g += `<circle cx="${q[0]}" cy="${q[1]}" r="4" fill="${ln.color}"><title>${kxEsc(ln.nombre)}: ${ln.fmt(ln.valores[i])}</title></circle>
+      <text x="${q[0]}" y="${q[1]-8}" text-anchor="middle" font-size="10" font-weight="700" fill="${ln.color}">${ln.fmt(ln.valores[i])}</text>`; });
+    for(let i=0;i<=4;i++){ const v = maxL*i/4; g += `<text x="${W-R+6}" y="${yl(v)+4}" font-size="10" fill="${ln.color}">${ln.fmt(v)}</text>`; }
+  }
+  const leyenda = series.map(se=>[se.nombre,se.color,'rect']).concat(opt.linea?[[opt.linea.nombre,opt.linea.color,'line']]:[]);
+  let lx = L;
+  leyenda.forEach(([n,c,t])=>{
+    g += t==='rect' ? `<circle cx="${lx+7}" cy="16" r="7" fill="${c}"/>` : `<line x1="${lx}" x2="${lx+14}" y1="16" y2="16" stroke="${c}" stroke-width="3"/>`;
+    g += `<text x="${lx+19}" y="20" font-size="12" fill="currentColor">${kxEsc(n)}</text>`;
+    lx += 34 + n.length*6.6;
+  });
+  if(opt.tituloEje) g += `<text x="${L+pw/2}" y="${H-8}" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" fill-opacity=".7">${kxEsc(opt.tituloEje)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
+}
+
+// Dona con leyenda. items: [{nombre, valor}]
+function kxSvgDona(items, opt){
+  opt = opt || {};
+  const pal = opt.colores || KX_COLORES;
+  items = items.filter(x=>x.valor>0).sort((a,b)=>b.valor-a.valor);
+  if(items.length > 8){ const resto = items.slice(7).reduce((s,x)=>s+x.valor,0); items = items.slice(0,7).concat([{nombre:'Otros', valor:resto}]); }
+  const total = items.reduce((s,x)=>s+x.valor,0);
+  if(!total) return `<div class="empty-state" style="padding:16px"><p>${opt.vacio||'Sin datos'}</p></div>`;
+  const W = 520, H = Math.max(230, 30 + items.length*25), cx = 115, cy = H/2, r = 95, ri = 58;
+  let a0 = -Math.PI/2, g = '';
+  items.forEach((it,i)=>{
+    const col = pal[i % pal.length];
+    const frac = it.valor/total, a1 = a0 + frac*2*Math.PI;
+    if(frac >= 0.9999){ g += `<circle cx="${cx}" cy="${cy}" r="${(r+ri)/2}" fill="none" stroke="${col}" stroke-width="${r-ri}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)}</title></circle>`; }
+    else {
+      const big = frac > .5 ? 1 : 0, P = (a,rr)=>[cx+rr*Math.cos(a), cy+rr*Math.sin(a)];
+      const [x1,y1]=P(a0,r),[x2,y2]=P(a1,r),[x3,y3]=P(a1,ri),[x4,y4]=P(a0,ri);
+      g += `<path d="M${x1},${y1} A${r},${r} 0 ${big} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${big} 0 ${x4},${y4} Z" fill="${col}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)} (${(frac*100).toFixed(1)}%)</title></path>`;
+    }
+    const ly = 26 + i*25;
+    g += `<rect x="245" y="${ly-11}" width="12" height="12" rx="3" fill="${col}"/>
+      <text x="263" y="${ly}" font-size="12" fill="currentColor">${kxEsc(kxCorta(it.nombre,22))}</text>
+      <text x="${W-6}" y="${ly}" text-anchor="end" font-size="12" font-weight="700" fill="currentColor">${kxFmtCorto(it.valor)} · ${(frac*100).toFixed(0)}%</text>`;
+    a0 = a1;
+  });
+  g += `<text x="${cx}" y="${cy-2}" text-anchor="middle" font-size="16" font-weight="800" fill="currentColor">${kxFmtCorto(total)}</text>
+        <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".65">${kxEsc(opt.centro||'total')}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
+}
+
+// Barras horizontales para el ranking de pérdidas
+function kxSvgRanking(items, color){
+  if(!items.length) return '';
+  const W = 640, fila = 26, H = 14 + items.length*fila, L = 180, R = 80;
+  const max = Math.max(...items.map(x=>x.valor), 1);
+  let g = '';
+  items.forEach((it,i)=>{
+    const y = 8 + i*fila, w = (it.valor/max)*(W-L-R);
+    g += `<text x="${L-8}" y="${y+14}" text-anchor="end" font-size="11.5" fill="currentColor">${i+1}. ${kxEsc(kxCorta(it.nombre,24))}</text>
+      <rect x="${L}" y="${y}" width="${Math.max(2,w)}" height="18" rx="4" fill="${color}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)}</title></rect>
+      <text x="${L+w+6}" y="${y+14}" font-size="11" font-weight="700" fill="currentColor">${kxFmtCorto(it.valor)}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
+}
+
+// Últimos meses (hasta p inclusive) que tienen datos
+function kxSerieMeses(p, metodo, n){
+  const out = []; let q = p;
+  for(let i=0;i<(n||6);i++){
+    const inf = kxCalcInforme(q, metodo);
+    if(inf.filas && inf.filas.length) out.unshift({ periodo:q, T:inf.totales });
+    q = kxMesAnterior(q);
+  }
+  return out;
+}
+function kxMesCorto(p){ const [y,m]=p.split('-').map(Number); return new Date(y,m-1,1).toLocaleDateString('es-AR',{month:'short'}).replace('.','')+' '+String(y).slice(2); }
+
+// Los gráficos del informe (se usan en pantalla y en el PDF)
+function kxGraficosInforme(inf, p){
+  const gr = {};
+  if(inf.metodos && inf.metodos.ppp && inf.metodos.peps){
+    const P = inf.metodos.ppp.totales, F = inf.metodos.peps.totales;
+    gr.metodos = kxSvgBarras(['Consumo real','Según recetas','Pérdida total','Stock final'],
+      [{nombre:'Promedio ponderado', color:KX_COL_PPP, valores:[P.realV,P.egrV,P.perdV,P.sfV]},
+       {nombre:'PEPS', color:KX_COL_PEPS, valores:[F.realV,F.egrV,F.perdV,F.sfV]}], {tituloEje:'Impacto por método de valorización'});
+  }
+  const serie = kxSerieMeses(p, inf.metodo==='precio'?'ppp':inf.metodo, 6);
+  if(serie.length){
+    gr.evolucion = kxSvgBarras(serie.map(x=>kxMesCorto(x.periodo)),
+      [{nombre:'Consumo real', color:KX_COL_PPP, valores:serie.map(x=>x.T.realV)},
+       {nombre:'Según recetas', color:KX_COL_REC, valores:serie.map(x=>x.T.egrV)},
+       {nombre:'Pérdida total', color:KX_COL_PERD, valores:serie.map(x=>x.T.perdV)}],
+      {etiquetas: serie.length<=3, linea:{nombre:'% merma', color:'#9B6BC8', valores:serie.map(x=>+(x.T.mermaPct||0).toFixed(1)), fmt:v=>(+v).toFixed(1)+'%'}});
+  }
+  gr.categorias = kxSvgDona((inf.categorias||[]).map(c=>({nombre:c.cat, valor:c.realV})), {centro:'consumo real', vacio:'Sin consumo este mes'});
+  gr.motivos = kxSvgDona(Object.entries(inf.motivos||{}).map(([k,v])=>({nombre:k==='inventario'?'Diferencia de inventario':(KX_MOTIVOS[k]||k), valor:v})),
+    {centro:'pérdida', vacio:'Sin mermas ni diferencias este mes ✅', colores:['#D9534F','#E0703C','#D4B24C','#C75B7A','#9B6BC8','#8C7B6B','#5B8DEF','#3FA7A7']});
+  gr.ranking = kxSvgRanking((inf.ranking||[]).map(r=>({nombre:r.desc, valor:r.perdV})), KX_COL_PERD);
+  return gr;
+}
+
 function kxDatosComparativa(inf){
   if(!inf.metodos || !inf.metodos.ppp || !inf.metodos.peps) return null;
   const P = inf.metodos.ppp.totales, F = inf.metodos.peps.totales;
@@ -16919,8 +17063,10 @@ function kxHtmlComparativa(inf){
   if(!filas) return '';
   const sel = inf.metodo;
   const th = k=>`style="text-align:right;${sel===k?'background:var(--trigo-lt)':''}"`;
+  const graf = (inf._graf && inf._graf.metodos) || '';
   return `<div class="card"><div class="card-header"><h3>⚖️ Comparación de métodos de valorización</h3></div>
     <div style="font-size:11px;color:var(--texto-2);padding:0 14px 8px">Mismos movimientos, dos formas de asignar el costo. El resaltado es el que se presenta en este informe.</div>
+    ${graf?`<div class="kx-graf">${graf}</div>`:''}
     <div class="table-wrap"><table><thead><tr><th>Concepto</th><th ${th('ppp')}>Promedio ponderado</th><th ${th('peps')}>PEPS</th><th style="text-align:right">Diferencia (PEPS − PPP)</th></tr></thead>
     <tbody>${filas.map(r=>`<tr${r.rep?' style="color:var(--texto-2)"':''}><td>${r.concepto}</td>
       <td style="text-align:right;${sel==='ppp'?'font-weight:700':''}">${fmt$(r.ppp)}</td>
@@ -16959,6 +17105,7 @@ function kxRenderInforme(){
        ${T.iniciales?`<br>📋 ${T.iniciales} insumo(s) con inventario inicial cargado este mes: fija el stock de arranque y no cuenta como consumo ni pérdida.`:''}</div>`;
 
   const maxCat = Math.max(...inf.categorias.map(x=>x.realV), 1);
+  const GR = kxGraficosInforme(inf, p); inf._graf = GR;
   const comparativa = kxHtmlComparativa(inf);
   const motivosHtml = Object.entries(inf.motivos).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
     <div class="bar-row"><span class="bar-label">${k==='inventario'?'🔢 Diferencia de inventario':(KX_MOTIVOS[k]||k)}</span>
@@ -16984,18 +17131,18 @@ function kxRenderInforme(){
         <div class="kpi-sub">ingresos valorizados s/IVA</div>${kxDelta(T.ingV, A.ingV)}</div>
     </div>
 
+    ${GR.evolucion?`<div class="card"><div class="card-header"><h3>📈 Evolución de los últimos meses</h3></div>
+      <div class="kx-graf">${GR.evolucion}</div></div>`:''}
     <div class="dash-grid">
       <div class="card"><div class="card-header"><h3>📦 Consumo real por categoría</h3></div>
-        <div class="mini-bar-chart">${inf.categorias.map(x=>`
-          <div class="bar-row"><span class="bar-label" title="${kxEsc(x.cat)}">${kxEsc(x.cat)}</span>
-            <div class="bar-track"><div class="bar-fill" style="width:${(Math.max(0,x.realV)/maxCat*100).toFixed(0)}%"></div></div>
-            <span class="bar-val">${fmt$(x.realV)}</span></div>`).join('')}</div></div>
+        <div class="kx-graf">${GR.categorias}</div></div>
       <div class="card"><div class="card-header"><h3>⚠️ Pérdida por motivo</h3></div>
-        <div class="mini-bar-chart">${motivosHtml||'<div class="empty-state" style="padding:16px"><p>Sin mermas ni diferencias este mes ✅</p></div>'}</div></div>
+        <div class="kx-graf">${GR.motivos}</div></div>
     </div>
 
     ${comparativa}
     <div class="card"><div class="card-header"><h3>🏆 Top 10 insumos con mayor pérdida</h3></div>
+      ${GR.ranking?`<div class="kx-graf">${GR.ranking}</div>`:''}
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>Insumo</th><th>Categoría</th><th>Cantidad perdida</th><th>Valor perdido</th><th>% de su consumo</th></tr></thead>
         <tbody>${inf.ranking.length ? inf.ranking.map((r,i)=>`<tr>
@@ -17054,6 +17201,7 @@ function kxImprimirInforme(){
   const metodo = kxMetodo();
   const inf = kxCalcInforme(p, metodo), ant = kxCalcInforme(kxMesAnterior(p), metodo), T = inf.totales, A = ant.totales;
   if(!inf.filas.length){ toast('⚠️ Sin datos para ese mes','error'); return; }
+  const GR = kxGraficosInforme(inf, p); inf._graf = GR;
   const comp = kxDatosComparativa(inf);
   const var$ = (a,b)=> b>0 ? `${a>=b?'▲':'▼'} ${((a-b)/b*100).toFixed(1)}%` : '—';
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Informe MP ${p} — Panadería Belén</title>
@@ -17062,7 +17210,8 @@ function kxImprimirInforme(){
   .sub{color:#5C4A3A;margin:4px 0 16px}.k{display:flex;gap:10px;flex-wrap:wrap}.kp{flex:1;min-width:120px;background:#F5E6C3;border-radius:8px;padding:10px;text-align:center}
   .kv{font-size:16px;font-weight:700;color:#8B5E08}.kl{font-size:9px;text-transform:uppercase;color:#5C4A3A}.kd{font-size:10px;color:#5C4A3A}
   table{width:100%;border-collapse:collapse}th{background:#F5EDD4;padding:6px;text-align:left;font-size:10px}td{padding:5px 6px;border-bottom:1px solid #F0E8D0}
-  .r{text-align:right}.neg{color:#C0392B}@media print{body{padding:0}}</style></head>
+  .r{text-align:right}.neg{color:#C0392B}.g{color:#1A0F08;max-width:720px;margin:6px 0 10px}.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  h2,.g,table{break-inside:avoid}@media print{body{padding:0}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head>
   <body onload="window.print()">
   <h1>🥖 Panadería Belén — Informe de Materia Prima</h1>
   <div class="sub">${kxMesNombre(p)} · ${inf.cerrado?'Mes cerrado':'Mes abierto (provisorio)'} · Valorizado por ${KX_METODO_CORTO[inf.metodo]||inf.metodo} · Emitido ${new Date().toLocaleString('es-AR')}</div>
@@ -17073,11 +17222,14 @@ function kxImprimirInforme(){
     <div class="kp"><div class="kv">${T.mermaPct.toFixed(1)}%</div><div class="kl">% merma</div><div class="kd">mes ant.: ${A.mermaPct.toFixed(1)}%</div></div>
     <div class="kp"><div class="kv">${fmt$(T.ingV)}</div><div class="kl">Compras</div><div class="kd">${var$(T.ingV,A.ingV)}</div></div>
   </div>
-  ${comp?`<h2>Comparación de métodos de valorización</h2><table><tr><th>Concepto</th><th class="r">Promedio ponderado</th><th class="r">PEPS</th><th class="r">Diferencia</th></tr>
+  ${GR.evolucion?`<h2>Evolución de los últimos meses</h2><div class="g">${GR.evolucion}</div>`:''}
+  <div class="g2"><div><h2>Consumo real por categoría</h2><div class="g">${GR.categorias}</div></div>
+    <div><h2>Pérdida por motivo</h2><div class="g">${GR.motivos}</div></div></div>
+  ${comp?`<h2>Comparación de métodos de valorización</h2>${GR.metodos?`<div class="g">${GR.metodos}</div>`:''}<table><tr><th>Concepto</th><th class="r">Promedio ponderado</th><th class="r">PEPS</th><th class="r">Diferencia</th></tr>
   ${comp.map(r=>`<tr><td>${r.concepto}</td><td class="r">${fmt$(r.ppp)}</td><td class="r">${r.rep?'—':fmt$(r.peps)}</td><td class="r">${r.rep||!r.dif?'—':(r.dif>0?'+':'')+fmt$(r.dif)}</td></tr>`).join('')}</table>`:''}
   <h2>Consumo por categoría</h2><table><tr><th>Categoría</th><th class="r">Consumo</th><th class="r">Pérdida</th></tr>
   ${inf.categorias.map(c=>`<tr><td>${kxEsc(c.cat)}</td><td class="r">${fmt$(c.realV)}</td><td class="r neg">${c.perdV?fmt$(c.perdV):'—'}</td></tr>`).join('')}</table>
-  <h2>Top 10 pérdidas</h2><table><tr><th>#</th><th>Insumo</th><th class="r">Cantidad</th><th class="r">Valor</th></tr>
+  <h2>Top 10 pérdidas</h2>${GR.ranking?`<div class="g">${GR.ranking}</div>`:''}<table><tr><th>#</th><th>Insumo</th><th class="r">Cantidad</th><th class="r">Valor</th></tr>
   ${inf.ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${kxEsc(r.desc)}</td><td class="r">${fmtN(r.perd)} ${kxEsc(r.uom)}</td><td class="r neg">${fmt$(r.perdV)}</td></tr>`).join('')||'<tr><td colspan="4">Sin pérdidas registradas</td></tr>'}</table>
   <h2>Detalle por insumo</h2><table><tr><th>Insumo</th><th class="r">Inicial</th><th class="r">Compras</th><th class="r">Recetas</th><th class="r">Mermas</th><th class="r">Dif. inv.</th><th class="r">Final</th><th class="r">Consumo $</th></tr>
   ${inf.filas.map(r=>`<tr><td>${kxEsc(r.desc)} <span style="color:#888">${kxEsc(r.uom)}</span></td><td class="r">${fmtN(r.si)}</td><td class="r">${fmtN(r.ing)}</td><td class="r">${fmtN(r.egr)}</td><td class="r">${fmtN(r.mer)}</td><td class="r">${fmtN(r.ajP-r.ajN)}</td><td class="r">${fmtN(r.sf)}</td><td class="r">${fmt$(r.realV)}</td></tr>`).join('')}</table>
