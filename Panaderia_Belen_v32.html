@@ -16968,7 +16968,7 @@ function kxSvgBarras(grupos, series, opt){
     series.forEach((se,j)=>{
       const v = Number(se.valores[i])||0, x = x0 + j*bw, yy = y(v), h = T+ph-yy;
       g += `<rect x="${x+2}" y="${yy}" width="${Math.max(1,bw-4)}" height="${Math.max(0,h)}" rx="5" fill="${se.color}"><title>${kxEsc(se.nombre)} · ${kxEsc(gr)}: ${fmt$(v)}</title></rect>`;
-      if(opt.etiquetas !== false) g += `<text x="${x+bw/2}" y="${yy-6}" text-anchor="middle" font-size="${series.length>2?9:11}" font-weight="700" fill="currentColor">${kxFmtCorto(v)}</text>`;
+      if(opt.etiquetas !== false && Math.abs(v) >= 0.005) g += `<text x="${x+bw/2}" y="${yy-6}" text-anchor="middle" font-size="${series.length>2?9:11}" font-weight="700" fill="currentColor">${kxFmtCorto(v)}</text>`;
     });
     g += `<text x="${L+gw*i+gw/2}" y="${T+ph+18}" text-anchor="middle" font-size="11.5" fill="currentColor" fill-opacity=".85">${kxEsc(kxCorta(gr,18))}</text>`;
   });
@@ -16997,7 +16997,7 @@ function kxSvgDona(items, opt){
   opt = opt || {};
   const pal = opt.colores || KX_COLORES;
   items = items.filter(x=>x.valor>0).sort((a,b)=>b.valor-a.valor);
-  if(items.length > 8){ const resto = items.slice(7).reduce((s,x)=>s+x.valor,0); items = items.slice(0,7).concat([{nombre:'Otros', valor:resto}]); }
+  if(items.length > 8){ const resto = items.slice(7).reduce((s,x)=>s+x.valor,0); items = items.slice(0,7).concat([{nombre:'Resto (varias)', valor:resto}]); }
   const total = items.reduce((s,x)=>s+x.valor,0);
   if(!total) return `<div class="empty-state" style="padding:16px"><p>${opt.vacio||'Sin datos'}</p></div>`;
   const W = 520, H = Math.max(230, 30 + items.length*25), cx = 115, cy = H/2, r = 95, ri = 58;
