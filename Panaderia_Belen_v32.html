@@ -16353,6 +16353,10 @@ function kxReponerAccion(accion){
     <div id="kx-tab-informe" style="display:none">
       <div class="toolbar">
         <input type="month" id="kx-inf-mes" onchange="kxRenderInforme()" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+        <select id="kx-inf-metodo" onchange="kxCambiarMetodo()" title="Método de valorización del inventario" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px;font-weight:600">
+          <option value="ppp">⚖️ Promedio ponderado</option>
+          <option value="peps">📚 PEPS</option>
+        </select>
         <button class="btn-secondary" onclick="kxExportarInformeCSV()">📊 Exportar CSV</button>
         <button class="btn-secondary" onclick="kxImprimirInforme()">🖨️ Imprimir / PDF para los dueños</button>
       </div>
@@ -16707,11 +16711,8 @@ function kxFilaVacia(insId, ds){
     real:0, realV:0, perd:0, perdV:0, sfV:0, motivos:{} };
 }
 
-// Calcula el informe de un mes. Si el mes está cerrado, devuelve la foto congelada.
-function kxCalcInforme(p){
-  const c = kxCierre(p);
-  if(c && c.estado==='cerrado' && c.informe) return {...c.informe, cerrado:true, cierre:c};
-
+// Cantidades del mes por insumo (los valores se reemplazan después según el método)
+function kxCalcInformeCant(p){
   const prevC = kxCierre(kxMesAnterior(p));
   const prevFilas = (prevC && prevC.estado==='cerrado' && prevC.informe) ? prevC.informe.filas : null;
   const porIns = {};
@@ -16743,12 +16744,146 @@ function kxCalcInforme(p){
     ['si','ini','sf','ing','egr','mer','ajP','ajN','real','perd'].forEach(k=>r[k]=+r[k].toFixed(4));
     ['ingV','egrV','merV','ajPV','ajNV','realV','perdV','sfV'].forEach(k=>r[k]=+r[k].toFixed(2));
     return r;
-  }).sort((a,b)=>b.realV-a.realV);
-  return kxTotalizar(p, filas);
+  });
+  return filas;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 6b. VALORIZACIÓN: PROMEDIO PONDERADO (PPP) y PEPS en paralelo
+//     Los dos métodos recorren los mismos movimientos; cambia solo el
+//     costo con que sale cada kilo. En el informe se elige cuál presentar.
+// ═══════════════════════════════════════════════════════════════════
+const KX_METODOS = { ppp:'Promedio ponderado', peps:'PEPS (primero entrado, primero salido)' };
+const KX_METODO_CORTO = { ppp:'Promedio ponderado', peps:'PEPS', precio:'Precio del momento' };
+function kxMetodo(){
+  const el = document.getElementById('kx-inf-metodo');
+  if(el && el.value) return el.value;
+  try{ return localStorage.getItem('kx_metodo') || 'ppp'; }catch(_){ return 'ppp'; }
+}
+function kxCambiarMetodo(){
+  try{ localStorage.setItem('kx_metodo', kxVal('kx-inf-metodo')); }catch(_){}
+  kxRenderInforme();
+}
+
+function kxValEstadoInicial(){ return { q:0, c:0, capas:[] }; }
+function kxValPepsTotal(st){ return st.capas.reduce((s,k)=>s+k[0]*k[1],0); }
+// Aplica un movimiento al estado y devuelve el valor en $ del movimiento según cada método
+function kxValAplicar(st, m){
+  const d = Number(m.d)||0, cu = Number(m.cu)||0;
+  let vP = 0, vF = 0;
+  if(d > 0){
+    const esCompra = m.tipo==='ingreso' || m.org==='inicial';
+    const cP = esCompra ? cu : (st.q > 0 ? st.c : cu);
+    const cF = cu;
+    vP = d*cP; vF = d*cF;
+    st.c = (st.q + d) > 0 ? ((st.q*st.c) + vP) / (st.q + d) : cP;
+    st.q += d;
+    st.capas.push([d, cF]);
+  } else if(d < 0){
+    let sale = -d;
+    vP = sale * (st.q > 0 ? st.c : cu);
+    st.q -= sale;
+    while(sale > 1e-9 && st.capas.length){
+      const k = st.capas[0], t = Math.min(k[0], sale);
+      vF += t*k[1]; k[0] -= t; sale -= t;
+      if(k[0] <= 1e-9) st.capas.shift();
+    }
+    if(sale > 1e-9) vF += sale * (st.c || cu);
+    if(st.q <= 1e-9){ st.q = 0; }
+  }
+  // Mantener el estado alineado con el stock resultante guardado en el movimiento
+  if(m.sd != null && isFinite(m.sd)){
+    const sd = Number(m.sd), dif = sd - st.q;
+    if(Math.abs(dif) > 1e-6){
+      if(dif > 0){ st.capas.push([dif, st.c || cu]); if(!st.c) st.c = cu; }
+      else { let x = -dif; while(x > 1e-9 && st.capas.length){ const k=st.capas[0], t=Math.min(k[0],x); k[0]-=t; x-=t; if(k[0]<=1e-9) st.capas.shift(); } }
+      st.q = sd;
+    }
+  }
+  return { ppp:vP, peps:vF };
+}
+
+// Recorre la historia de cada insumo hasta el mes p y valoriza ese mes con los dos métodos
+function kxValuarPeriodo(p){
+  const res = {};
+  const cierresConEstado = (DB.cierresMP||[]).filter(c=>c.estado==='cerrado' && c.periodo < p && c.informe && c.informe.estadoVal)
+    .sort((a,b)=>b.periodo.localeCompare(a.periodo));
+  const porIns = {};
+  (DB.movimientosMP||[]).forEach(m=>{ if((m.f||'').slice(0,7) <= p) (porIns[m.ins] = porIns[m.ins] || []).push(m); });
+  Object.entries(porIns).forEach(([insId, lista])=>{
+    lista.sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ts||0)-(b._ts||0));
+    if(!lista.some(m=>(m.f||'').slice(0,7)===p)) return;
+    let st = kxValEstadoInicial(), desde = '';
+    const base = cierresConEstado.find(c=>c.informe.estadoVal[insId]);
+    if(base){
+      const e = base.informe.estadoVal[insId];
+      st = { q:e.q, c:e.c, capas:(e.capas||[]).map(k=>[k[0],k[1]]) };
+      desde = base.periodo;
+    } else {
+      const m0 = lista[0];
+      const q0 = Math.max(0, (Number(m0.sd)||0) - (Number(m0.d)||0));
+      if(q0 > 0){ st.q = q0; st.c = Number(m0.cu)||0; st.capas = [[q0, st.c]]; }
+    }
+    const acc = {};
+    ['ppp','peps'].forEach(k=>acc[k]={ siV:null, ingV:0, egrV:0, merV:0, ajPV:0, ajNV:0, iniV:0, sfV:0, motivos:{} });
+    lista.forEach(m=>{
+      const per = (m.f||'').slice(0,7);
+      if(desde && per <= desde) return;
+      if(per === p && acc.ppp.siV === null){ acc.ppp.siV = st.q*st.c; acc.peps.siV = kxValPepsTotal(st); }
+      const v = kxValAplicar(st, m);
+      if(per !== p) return;
+      ['ppp','peps'].forEach(k=>{
+        const a = acc[k], val = v[k], d = Number(m.d)||0;
+        if(m.tipo==='ingreso') a.ingV += d>=0 ? val : -val;
+        else if(m.tipo==='egreso') a.egrV += d<0 ? val : -val;
+        else if(m.tipo==='merma'){ a.merV += val; const mo=m.mot||'otro'; a.motivos[mo]=(a.motivos[mo]||0)+val; }
+        else if(m.org==='inicial') a.iniV += d>=0 ? val : -val;
+        else if(m.tipo==='ajuste'){ if(d>=0) a.ajPV += val; else { a.ajNV += val; a.motivos.inventario=(a.motivos.inventario||0)+val; } }
+      });
+    });
+    acc.ppp.sfV = st.q*st.c; acc.peps.sfV = kxValPepsTotal(st);
+    res[insId] = { ppp:acc.ppp, peps:acc.peps, estado:{ q:+st.q.toFixed(4), c:+st.c.toFixed(4), capas:st.capas.map(k=>[+k[0].toFixed(4), +k[1].toFixed(4)]) } };
+  });
+  return res;
+}
+
+// Informe de un mes con un método. Si el mes está cerrado, devuelve la foto congelada.
+function kxCalcInforme(p, metodo){
+  metodo = metodo || kxMetodo();
+  const c = kxCierre(p);
+  if(c && c.estado==='cerrado' && c.informe){
+    const I = c.informe;
+    if(I.metodos && I.metodos[metodo]) return {...I.metodos[metodo], periodo:p, metodo, metodos:I.metodos, cerrado:true, cierre:c};
+    return {...I, metodo:'precio', cerrado:true, cierre:c};   // cierres anteriores a los métodos
+  }
+  const cant = kxCalcInformeCant(p);
+  const val  = kxValuarPeriodo(p);
+  const metodos = {};
+  ['ppp','peps'].forEach(k=>{
+    const filas = cant.map(r0=>{
+      const r = JSON.parse(JSON.stringify(r0));
+      const v = val[r.ins] && val[r.ins][k];
+      r.sfRepV = +(Math.max(0,r.sf) * r.precio).toFixed(2);
+      if(v){
+        r.ingV = v.ingV; r.egrV = v.egrV; r.merV = v.merV; r.ajPV = v.ajPV; r.ajNV = v.ajNV;
+        r.iniV = v.iniV; r.siV = (v.siV||0) + v.iniV; r.sfV = v.sfV; r.motivos = v.motivos;
+      }
+      r.realV = r.egrV + r.merV + r.ajNV - r.ajPV;
+      r.perdV = r.merV + r.ajNV;
+      ['ingV','egrV','merV','ajPV','ajNV','iniV','siV','sfV','realV','perdV'].forEach(x=>r[x]=+(Number(r[x])||0).toFixed(2));
+      Object.keys(r.motivos||{}).forEach(x=>r.motivos[x]=+r.motivos[x].toFixed(2));
+      return r;
+    }).sort((a,b)=>b.realV-a.realV);
+    const inf = kxTotalizar(p, filas);
+    metodos[k] = { filas:inf.filas, categorias:inf.categorias, ranking:inf.ranking, motivos:inf.motivos, totales:inf.totales };
+  });
+  const estadoVal = {};
+  Object.entries(val).forEach(([id,v])=>estadoVal[id]=v.estado);
+  return {...metodos[metodo], periodo:p, metodo, metodos, estadoVal};
 }
 
 function kxTotalizar(p, filas){
-  const T = {ingV:0, egrV:0, merV:0, ajPV:0, ajNV:0, realV:0, perdV:0, sfV:0};
+  const T = {ingV:0, egrV:0, merV:0, ajPV:0, ajNV:0, realV:0, perdV:0, sfV:0, sfRepV:0, siV:0, iniV:0};
   const cats = {}, motivos = {};
   filas.forEach(r=>{
     Object.keys(T).forEach(k=>T[k]+=r[k]||0);
@@ -16766,6 +16901,33 @@ function kxTotalizar(p, filas){
     motivos, totales:T };
 }
 
+function kxDatosComparativa(inf){
+  if(!inf.metodos || !inf.metodos.ppp || !inf.metodos.peps) return null;
+  const P = inf.metodos.ppp.totales, F = inf.metodos.peps.totales;
+  return [
+    ['Consumo real', P.realV, F.realV],
+    ['Consumo según recetas', P.egrV, F.egrV],
+    ['Mermas declaradas', P.merV, F.merV],
+    ['Pérdida oculta (conteos)', P.ajNV - P.ajPV, F.ajNV - F.ajPV],
+    ['Pérdida total', P.perdV, F.perdV],
+    ['Stock final', P.sfV, F.sfV],
+  ].map(r=>({ concepto:r[0], ppp:+r[1].toFixed(2), peps:+r[2].toFixed(2), dif:+(r[2]-r[1]).toFixed(2) }))
+   .concat([{ concepto:'Stock final a precio de reposición', ppp:+(P.sfRepV||0).toFixed(2), peps:+(F.sfRepV||0).toFixed(2), dif:0, rep:true }]);
+}
+function kxHtmlComparativa(inf){
+  const filas = kxDatosComparativa(inf);
+  if(!filas) return '';
+  const sel = inf.metodo;
+  const th = k=>`style="text-align:right;${sel===k?'background:var(--trigo-lt)':''}"`;
+  return `<div class="card"><div class="card-header"><h3>⚖️ Comparación de métodos de valorización</h3></div>
+    <div style="font-size:11px;color:var(--texto-2);padding:0 14px 8px">Mismos movimientos, dos formas de asignar el costo. El resaltado es el que se presenta en este informe.</div>
+    <div class="table-wrap"><table><thead><tr><th>Concepto</th><th ${th('ppp')}>Promedio ponderado</th><th ${th('peps')}>PEPS</th><th style="text-align:right">Diferencia (PEPS − PPP)</th></tr></thead>
+    <tbody>${filas.map(r=>`<tr${r.rep?' style="color:var(--texto-2)"':''}><td>${r.concepto}</td>
+      <td style="text-align:right;${sel==='ppp'?'font-weight:700':''}">${fmt$(r.ppp)}</td>
+      <td style="text-align:right;${sel==='peps'?'font-weight:700':''}">${r.rep?'—':fmt$(r.peps)}</td>
+      <td style="text-align:right">${r.rep||!r.dif?'—':(r.dif>0?'+':'')+fmt$(r.dif)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+
 function kxDelta(act, ant, inverso){
   if(!(ant>0)) return '<div class="kx-delta" style="color:var(--texto-2)">sin dato del mes anterior</div>';
   const v = (act-ant)/ant*100;
@@ -16778,7 +16940,10 @@ function kxRenderInforme(){
   const p = kxVal('kx-inf-mes') || kxMesActual();
   const cont = document.getElementById('kx-informe');
   if(!cont) return;
-  const inf = kxCalcInforme(p), ant = kxCalcInforme(kxMesAnterior(p));
+  const selM = document.getElementById('kx-inf-metodo');
+  if(selM && !selM.dataset.init){ selM.dataset.init='1'; try{ selM.value = localStorage.getItem('kx_metodo') || 'ppp'; }catch(_){} }
+  const metodo = kxMetodo();
+  const inf = kxCalcInforme(p, metodo), ant = kxCalcInforme(kxMesAnterior(p), metodo);
   const T = inf.totales, A = ant.totales;
   if(!inf.filas.length){
     cont.innerHTML = `<div class="card"><div class="empty-state"><div class="es-icon">📊</div><h4>Sin movimientos en ${kxMesNombre(p)}</h4>
@@ -16790,9 +16955,11 @@ function kxRenderInforme(){
     ? `<div class="kx-cierre-banner alert-ok">🔒 <strong>Mes cerrado</strong> el ${kxFechaFmt((c.fechaCierre||'').slice(0,10))} por ${kxEsc(c.usuario)}. Estos números están congelados.</div>`
     : `<div class="kx-cierre-banner alert-info">📝 <strong>Mes abierto</strong>: los números pueden cambiar hasta el cierre.
        ${T.conteos===0?' Todavía no hay conteos físicos este mes: sin conteo, la pérdida oculta no aparece.':` ${T.conteos} conteo(s) físico(s) registrados.`}
+       <br>⚖️ Valorizado por <strong>${KX_METODO_CORTO[inf.metodo]||inf.metodo}</strong>${inf.metodo==='precio'?' (mes cerrado antes de incorporar los métodos)':''}.
        ${T.iniciales?`<br>📋 ${T.iniciales} insumo(s) con inventario inicial cargado este mes: fija el stock de arranque y no cuenta como consumo ni pérdida.`:''}</div>`;
 
   const maxCat = Math.max(...inf.categorias.map(x=>x.realV), 1);
+  const comparativa = kxHtmlComparativa(inf);
   const motivosHtml = Object.entries(inf.motivos).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
     <div class="bar-row"><span class="bar-label">${k==='inventario'?'🔢 Diferencia de inventario':(KX_MOTIVOS[k]||k)}</span>
       <div class="bar-track"><div class="bar-fill" style="width:${(v/Math.max(T.perdV,1)*100).toFixed(0)}%;background:var(--alerta)"></div></div>
@@ -16827,6 +16994,7 @@ function kxRenderInforme(){
         <div class="mini-bar-chart">${motivosHtml||'<div class="empty-state" style="padding:16px"><p>Sin mermas ni diferencias este mes ✅</p></div>'}</div></div>
     </div>
 
+    ${comparativa}
     <div class="card"><div class="card-header"><h3>🏆 Top 10 insumos con mayor pérdida</h3></div>
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>Insumo</th><th>Categoría</th><th>Cantidad perdida</th><th>Valor perdido</th><th>% de su consumo</th></tr></thead>
@@ -16851,7 +17019,7 @@ function kxRenderInforme(){
           : `<td>${fmtN(r.real)}</td><td><strong>${fmt$(r.realV)}</strong></td>`}<td class="${r.perdV?'kx-neg':''}">${r.perdV?fmt$(r.perdV):'—'}</td></tr>`; }).join('')}
         </tbody>
         <tfoot><tr style="background:var(--miga-dk);font-weight:700">
-          <td colspan="9" style="padding:10px 14px">TOTAL · Stock final valorizado: ${fmt$(T.sfV)}</td>
+          <td colspan="9" style="padding:10px 14px">TOTAL · Stock final valorizado (${KX_METODO_CORTO[inf.metodo]||''}): ${fmt$(T.sfV)}${T.sfRepV?` · a precio de reposición: ${fmt$(T.sfRepV)}`:''}</td>
           <td style="padding:10px 14px">${fmt$(T.realV)}</td><td style="padding:10px 14px" class="kx-neg">${fmt$(T.perdV)}</td></tr></tfoot>
       </table></div></div>`;
   setTimeout(ajustarTamKpis, 0);
@@ -16859,9 +17027,10 @@ function kxRenderInforme(){
 
 function kxExportarInformeCSV(){
   const p = kxVal('kx-inf-mes') || kxMesActual();
-  const inf = kxCalcInforme(p), T = inf.totales;
+  const inf = kxCalcInforme(p, kxMetodo()), T = inf.totales;
   const filas = [
     [`INFORME DE MATERIA PRIMA — ${kxMesNombre(p).toUpperCase()} — PANADERÍA BELÉN`],
+    [`Método de valorización: ${KX_METODO_CORTO[inf.metodo]||inf.metodo}`],
     [inf.cerrado ? `Mes cerrado el ${(inf.cierre.fechaCierre||'').slice(0,10)} por ${inf.cierre.usuario}` : 'Mes abierto (valores provisorios)'],
     [],
     ['Consumo real', +T.realV.toFixed(2)], ['Consumo según recetas', +T.egrV.toFixed(2)],
@@ -16873,14 +17042,19 @@ function kxExportarInformeCSV(){
   inf.filas.forEach(r=>filas.push([r.desc,r.cat,r.uom,r.si,r.ing,r.egr,r.mer,+(r.ajP-r.ajN).toFixed(4),r.sf,r.real,r.realV,r.perdV]));
   filas.push([]); filas.push(['CONSUMO POR CATEGORÍA','Valor consumo','Valor pérdida']);
   inf.categorias.forEach(c=>filas.push([c.cat, +c.realV.toFixed(2), +c.perdV.toFixed(2)]));
-  descargarCSV(filas, `Informe_MP_${p}.csv`);
+  const comp = kxDatosComparativa(inf);
+  if(comp){ filas.push([]); filas.push(['COMPARACIÓN DE MÉTODOS','Promedio ponderado','PEPS','Diferencia (PEPS − PPP)']);
+    comp.forEach(r=>filas.push([r.concepto, r.ppp, r.rep?'':r.peps, r.rep?'':r.dif])); }
+  descargarCSV(filas, `Informe_MP_${p}_${inf.metodo}.csv`);
   toast('📊 Informe exportado · Abrilo con Excel','success');
 }
 
 function kxImprimirInforme(){
   const p = kxVal('kx-inf-mes') || kxMesActual();
-  const inf = kxCalcInforme(p), ant = kxCalcInforme(kxMesAnterior(p)), T = inf.totales, A = ant.totales;
+  const metodo = kxMetodo();
+  const inf = kxCalcInforme(p, metodo), ant = kxCalcInforme(kxMesAnterior(p), metodo), T = inf.totales, A = ant.totales;
   if(!inf.filas.length){ toast('⚠️ Sin datos para ese mes','error'); return; }
+  const comp = kxDatosComparativa(inf);
   const var$ = (a,b)=> b>0 ? `${a>=b?'▲':'▼'} ${((a-b)/b*100).toFixed(1)}%` : '—';
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Informe MP ${p} — Panadería Belén</title>
   <style>body{font-family:Arial,sans-serif;padding:24px;color:#1A0F08;font-size:12px}
@@ -16891,7 +17065,7 @@ function kxImprimirInforme(){
   .r{text-align:right}.neg{color:#C0392B}@media print{body{padding:0}}</style></head>
   <body onload="window.print()">
   <h1>🥖 Panadería Belén — Informe de Materia Prima</h1>
-  <div class="sub">${kxMesNombre(p)} · ${inf.cerrado?'Mes cerrado':'Mes abierto (provisorio)'} · Emitido ${new Date().toLocaleString('es-AR')}</div>
+  <div class="sub">${kxMesNombre(p)} · ${inf.cerrado?'Mes cerrado':'Mes abierto (provisorio)'} · Valorizado por ${KX_METODO_CORTO[inf.metodo]||inf.metodo} · Emitido ${new Date().toLocaleString('es-AR')}</div>
   <div class="k">
     <div class="kp"><div class="kv">${fmt$(T.realV)}</div><div class="kl">Consumo real</div><div class="kd">${var$(T.realV,A.realV)}</div></div>
     <div class="kp"><div class="kv">${fmt$(T.egrV)}</div><div class="kl">Según recetas</div><div class="kd">${var$(T.egrV,A.egrV)}</div></div>
@@ -16899,6 +17073,8 @@ function kxImprimirInforme(){
     <div class="kp"><div class="kv">${T.mermaPct.toFixed(1)}%</div><div class="kl">% merma</div><div class="kd">mes ant.: ${A.mermaPct.toFixed(1)}%</div></div>
     <div class="kp"><div class="kv">${fmt$(T.ingV)}</div><div class="kl">Compras</div><div class="kd">${var$(T.ingV,A.ingV)}</div></div>
   </div>
+  ${comp?`<h2>Comparación de métodos de valorización</h2><table><tr><th>Concepto</th><th class="r">Promedio ponderado</th><th class="r">PEPS</th><th class="r">Diferencia</th></tr>
+  ${comp.map(r=>`<tr><td>${r.concepto}</td><td class="r">${fmt$(r.ppp)}</td><td class="r">${r.rep?'—':fmt$(r.peps)}</td><td class="r">${r.rep||!r.dif?'—':(r.dif>0?'+':'')+fmt$(r.dif)}</td></tr>`).join('')}</table>`:''}
   <h2>Consumo por categoría</h2><table><tr><th>Categoría</th><th class="r">Consumo</th><th class="r">Pérdida</th></tr>
   ${inf.categorias.map(c=>`<tr><td>${kxEsc(c.cat)}</td><td class="r">${fmt$(c.realV)}</td><td class="r neg">${c.perdV?fmt$(c.perdV):'—'}</td></tr>`).join('')}</table>
   <h2>Top 10 pérdidas</h2><table><tr><th>#</th><th>Insumo</th><th class="r">Cantidad</th><th class="r">Valor</th></tr>
@@ -16943,16 +17119,17 @@ function kxCerrarMes(){
   if(p >= kxMesActual()){
     if(!confirm(`⚠️ ${kxMesNombre(p)} todavía no terminó.\nSi lo cerrás, no se podrán cargar más movimientos con fecha de este mes.\n\n¿Continuar?`)) return;
   }
-  const inf = kxCalcInforme(p);
+  const inf = kxCalcInforme(p, 'ppp');
   if(!inf.filas.length && !confirm(`${kxMesNombre(p)} no tiene movimientos registrados.\n¿Cerrarlo igual?`)) return;
   // Validación 4: conteos físicos
   if(inf.filas.length && inf.totales.conteos===0){
     if(!confirm(`⚠️ No hay conteos físicos cargados en ${kxMesNombre(p)}.\n\nSin conteo, el consumo real queda igual al de las recetas y la pérdida oculta no aparece en el informe.\n\n¿Cerrar igual?`)) return;
   }
-  if(!confirm(`🔒 Cerrar ${kxMesNombre(p)}\n\nConsumo real: ${fmt$(inf.totales.realV)}\nPérdida total: ${fmt$(inf.totales.perdV)} (${inf.totales.mermaPct.toFixed(1)}%)\n\nEl informe queda congelado. ¿Confirmar?`)) return;
+  if(!confirm(`🔒 Cerrar ${kxMesNombre(p)}\n\n(Promedio ponderado — PEPS también queda guardado)\nConsumo real: ${fmt$(inf.totales.realV)}\nPérdida total: ${fmt$(inf.totales.perdV)} (${inf.totales.mermaPct.toFixed(1)}%)\n\nEl informe queda congelado. ¿Confirmar?`)) return;
 
   const usuario = getAlias(usuarioActual.id) || usuarioActual.nombre;
-  const snap = { periodo:p, filas:inf.filas, categorias:inf.categorias, ranking:inf.ranking, motivos:inf.motivos, totales:inf.totales };
+  const snap = { periodo:p, filas:inf.filas, categorias:inf.categorias, ranking:inf.ranking, motivos:inf.motivos, totales:inf.totales,
+    metodos: inf.metodos, estadoVal: inf.estadoVal || {} };
   const existente = kxCierre(p);
   const hist = existente ? (existente.historial||[]) : [];
   hist.push({accion:'cierre', usuario, fecha:new Date().toISOString(), motivo:''});
