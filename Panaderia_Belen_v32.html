@@ -15733,8 +15733,14 @@ window.addEventListener('DOMContentLoaded', ()=>{
   setTimeout(liberar, 5000); // seguro: nunca bloquear el sistema
 
   function tx(modo){ return db.transaction(IDB_STORE, modo).objectStore(IDB_STORE); }
+  // v33.3: una sola escritura en curso por clave. Si llegan más cambios mientras
+  // se escribe, se guarda solo el último cuando termina la anterior.
+  // Antes cada guardado mandaba la base entera al navegador aunque hubiera
+  // otra escritura igual en camino: con bases grandes, Brave se caía.
+  const enCurso = new Map(), siguiente = new Map();
   function escribir(k, v){
     if(!db) return;
+    if(enCurso.has(k)){ siguiente.set(k, v); return; }
     const pr = new Promise(res=>{
       try{
         const t = db.transaction(IDB_STORE,'readwrite');
@@ -15743,17 +15749,24 @@ window.addEventListener('DOMContentLoaded', ()=>{
         t.onerror = t.onabort = ()=>{ console.warn('IndexedDB: no se pudo guardar', k, t.error); res(false); };
       }catch(e){ console.warn('IndexedDB:', e); res(false); }
     });
+    enCurso.set(k, pr);
     pendientes.push(pr);
-    pr.then(()=>{ pendientes = pendientes.filter(x=>x!==pr); });
+    pr.then(()=>{
+      pendientes = pendientes.filter(x=>x!==pr); enCurso.delete(k);
+      if(siguiente.has(k)){ const nv = siguiente.get(k); siguiente.delete(k); escribir(k, nv); }
+    });
   }
-  window.kxIdbFlush = ()=>Promise.all(pendientes.slice());
+  window.kxIdbFlush = async ()=>{ while(pendientes.length || siguiente.size){ await Promise.all(pendientes.slice()); await new Promise(r=>setTimeout(r,0)); } };
 
   SP.getItem = function(k){
     if(window.kxIdbActivo && this===window.localStorage && redirigir(k)) return mem.has(k) ? mem.get(k) : null;
     return origGet.call(this, k);
   };
   SP.setItem = function(k, v){
-    if(window.kxIdbActivo && this===window.localStorage && redirigir(k)){ v = String(v); mem.set(k, v); escribir(k, v); return; }
+    if(window.kxIdbActivo && this===window.localStorage && redirigir(k)){
+      v = String(v);
+      if(mem.get(k) === v && !siguiente.has(k)) return;   // sin cambios (ej: fotos del catálogo): no reescribir
+      mem.set(k, v); escribir(k, v); return; }
     return origSet.call(this, k, v);
   };
   SP.removeItem = function(k){
