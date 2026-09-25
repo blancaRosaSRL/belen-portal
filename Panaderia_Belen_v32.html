@@ -13684,7 +13684,7 @@ function guardarEnStorage(){
                 pedidos:renderPedidos, inventario:renderInventario, recetas:renderRecetas,
                 catalogo:renderCatalogo, produccion:renderProduccion, remitos:renderRemitos,
                 sucursales:renderSucursales, rentabilidad:renderRentabilidad,
-                empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios,
+                empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios, bienes:()=>{ if(typeof bfRender==='function' && !document.querySelector('#bf-modal-art.open,#bf-modal-mov.open')) bfRender(); },
               };
               if(renders2[pid]) renders2[pid]();
             }catch(_){}
@@ -13951,7 +13951,7 @@ async function bajarDBNube(){
             catalogo:renderCatalogo, produccion:renderProduccion, remitos:renderRemitos,
             pedidoscompartidos:renderPedidosCompartidos, sucursales:renderSucursales,
             rentabilidad:renderRentabilidad, repartidores:renderRepartidores,
-            empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios,
+            empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios, bienes:()=>{ if(typeof bfRender==='function' && !document.querySelector('#bf-modal-art.open,#bf-modal-mov.open')) bfRender(); },
           };
           if(renders[pid]) renders[pid]();
           const total = Object.values(data.db).reduce((s,a)=>s+(Array.isArray(a)?a.length:1),0);
@@ -14011,7 +14011,7 @@ async function recuperarDatosAnteriores(){
       catalogo:renderCatalogo, produccion:renderProduccion, remitos:renderRemitos,
       pedidoscompartidos:renderPedidosCompartidos, sucursales:renderSucursales,
       rentabilidad:renderRentabilidad, repartidores:renderRepartidores,
-      empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios,
+      empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios, bienes:()=>{ if(typeof bfRender==='function' && !document.querySelector('#bf-modal-art.open,#bf-modal-mov.open')) bfRender(); },
     };
     if(renders[pid]) renders[pid]();
 
@@ -14182,16 +14182,26 @@ async function sincronizarNube(silencioso=false){
     // Así recibimos también lo que cargaron otras PCs en este mismo sync
     if(dataPost.db){
       const dbFinal = dataPost.db;
+      // FIX v33.1: fusionar (no reemplazar). Lo que se cargó en esta PC mientras
+      // el servidor procesaba la subida no viene en la respuesta y antes se perdía.
       CLOUD_SYNC_ARRAYS.forEach(col=>{
-        if(Array.isArray(dbFinal[col]) && dbFinal[col].length > 0){
-          DB[col] = dbFinal[col];
-        }
+        if(!Array.isArray(dbFinal[col]) || dbFinal[col].length === 0) return;
+        const k = r=>r && (r.id||r.nro||r.legajo);
+        const local = Array.isArray(DB[col]) ? DB[col] : [];
+        const m = new Map();
+        dbFinal[col].forEach(r=>{ const id=k(r); if(id) m.set(id,r); });
+        local.forEach(r=>{ const id=k(r); if(!id) return; const o=m.get(id); if(!o || (r._ts||0) > (o._ts||0)) m.set(id,r); });
+        const sinId = [...dbFinal[col], ...local].filter(r=>!k(r));
+        let res = [...m.values(), ...sinId];
+        if(col==='auditoria') res = res.sort((a,b)=>(b._ts||0)-(a._ts||0)).slice(0,500);
+        DB[col] = res;
       });
       guardarEnStorage();
     }
 
-    // 5. Limpiar cola
-    limpiarQueue();
+    // 5. Limpiar cola (solo lo que ya subió; lo cargado durante el sync queda para el próximo)
+    _syncQueue = (_syncQueue||[]).filter(c=>(c.ts||0) >= inicio);
+    if(_syncQueue.length) { guardarQueue(); actualizarBadgeSync(); } else limpiarQueue();
 
     const ms = Date.now()-inicio;
     if(!silencioso) toast(`✅ Sincronizado en ${ms}ms · ${conflictos} conflicto(s)`,'success');
@@ -14208,7 +14218,7 @@ async function sincronizarNube(silencioso=false){
       catalogo:renderCatalogo, produccion:renderProduccion, remitos:renderRemitos,
       pedidoscompartidos:renderPedidosCompartidos, sucursales:renderSucursales,
       rentabilidad:renderRentabilidad, repartidores:renderRepartidores,
-      empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios,
+      empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios, bienes:()=>{ if(typeof bfRender==='function' && !document.querySelector('#bf-modal-art.open,#bf-modal-mov.open')) bfRender(); },
     };
     if(renders[pid]) renders[pid]();
     registrarAuditoria('Sincronización','Sync v3',`OK en ${ms}ms · conflictos: ${conflictos}`);
@@ -14316,7 +14326,7 @@ async function pullSilencioso(){
         catalogo:renderCatalogo, produccion:renderProduccion, remitos:renderRemitos,
         pedidoscompartidos:renderPedidosCompartidos, sucursales:renderSucursales,
         rentabilidad:renderRentabilidad, repartidores:renderRepartidores,
-        empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios,
+        empleados:renderEmpleados, auditoria:renderAuditoria, usuarios:renderUsuarios, bienes:()=>{ if(typeof bfRender==='function' && !document.querySelector('#bf-modal-art.open,#bf-modal-mov.open')) bfRender(); },
       };
       if(renders[pid]) renders[pid]();
       // Badge de notificación
@@ -17455,6 +17465,66 @@ function bfTocar(b){
   try{ encolarCambio('bienes','upsert',{id:b.id}); }catch(_){}
 }
 
+// ── Lista desplegable propia (v33.1) ─────────────────────────────
+// Reemplaza al <datalist> del navegador, que filtraba por lo ya escrito
+// y parecía "trabado" mostrando una sola opción.
+const BF_UNIDADES = ['unidades','litros','kg','bidones','packs','cajas','rollos','pares','metros','juegos'];
+function bfUnidades(){ return [...new Set([...BF_UNIDADES, ...(DB.bienes||[]).map(b=>b.uom).filter(Boolean)])]; }
+let _bfComboAbierto = null;
+function bfCombo(inputId, fuente, alElegir){
+  const inp = document.getElementById(inputId); if(!inp || inp._bfCombo) return;
+  inp._bfCombo = true;
+  const wrap = document.createElement('div'); wrap.style.cssText='position:relative';
+  inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+  inp.style.paddingRight = '30px';
+  const btn = document.createElement('button'); btn.type='button'; btn.tabIndex=-1; btn.textContent='▾';
+  btn.style.cssText='position:absolute;right:4px;top:50%;transform:translateY(-50%);border:none;background:transparent;font-size:15px;cursor:pointer;color:var(--texto-2);padding:4px 6px';
+  wrap.appendChild(btn);
+  const lista = document.createElement('div');
+  lista.className = 'bf-combo-lista'; lista.id = 'bf-combo-' + inputId;
+  lista.style.cssText='position:fixed;z-index:99999;background:#fff;border:1px solid var(--borde,#ddd);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);max-height:240px;overflow-y:auto;display:none;font-size:13px';
+  document.body.appendChild(lista);
+  let sel = -1, filtrar = false;
+  const opciones = ()=>{ const q = inp.value.trim().toLowerCase(); const t = fuente()||[];
+    return (filtrar && q) ? t.filter(o=>o.toLowerCase().includes(q)) : t; };
+  const pintar = ()=>{
+    const ops = opciones(), actual = inp.value.trim().toLowerCase();
+    if(!ops.length){ lista.innerHTML = `<div style="padding:8px 12px;color:var(--texto-2);font-style:italic">Nuevo: "${kxEsc(inp.value)}" — se agrega al guardar</div>`; return; }
+    lista.innerHTML = ops.map((o,i)=>`<div data-v="${kxEsc(o)}" style="padding:8px 12px;cursor:pointer;${i===sel?'background:var(--trigo-lt,#f6ead3);':''}${o.toLowerCase()===actual?'font-weight:700;':''}">${o.toLowerCase()===actual?'✓ ':''}${kxEsc(o)}</div>`).join('');
+  };
+  const ubicar = ()=>{ const r = inp.getBoundingClientRect(); lista.style.left=r.left+'px'; lista.style.width=r.width+'px';
+    const abajo = window.innerHeight - r.bottom;
+    if(abajo < 200 && r.top > abajo){ lista.style.top=''; lista.style.bottom=(window.innerHeight-r.top+2)+'px'; }
+    else { lista.style.bottom=''; lista.style.top=(r.bottom+2)+'px'; } };
+  const cerrar = ()=>{ lista.style.display='none'; if(_bfComboAbierto===cerrar) _bfComboAbierto=null; };
+  const abrir = (todo)=>{ if(_bfComboAbierto && _bfComboAbierto!==cerrar) _bfComboAbierto();
+    filtrar = !todo; sel = -1; pintar(); ubicar(); lista.style.display=''; _bfComboAbierto = cerrar; };
+  const elegir = v=>{ inp.value = v; cerrar(); inp.dispatchEvent(new Event('change',{bubbles:true})); if(alElegir) alElegir(v); };
+  lista.addEventListener('mousedown', e=>{ e.preventDefault(); const d=e.target.closest('[data-v]'); if(d) elegir(d.dataset.v); });
+  btn.addEventListener('mousedown', e=>{ e.preventDefault(); if(lista.style.display==='none'){ inp.focus(); abrir(true); } else cerrar(); });
+  inp.addEventListener('focus', ()=>{ try{ inp.select(); }catch(_){} abrir(true); });
+  inp.addEventListener('click', ()=>{ if(lista.style.display==='none') abrir(true); });
+  inp.addEventListener('input', ()=>{ filtrar = true; sel = -1; pintar(); ubicar(); lista.style.display=''; _bfComboAbierto = cerrar; });
+  inp.addEventListener('blur', ()=>setTimeout(cerrar, 120));
+  inp.addEventListener('keydown', e=>{
+    const ops = opciones();
+    if(e.key==='ArrowDown'){ e.preventDefault(); if(lista.style.display==='none') abrir(true); sel=Math.min(ops.length-1, sel+1); pintar(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); sel=Math.max(0, sel-1); pintar(); }
+    else if(e.key==='Enter' && lista.style.display!=='none' && sel>=0 && ops[sel]){ e.preventDefault(); elegir(ops[sel]); }
+    else if(e.key==='Escape' && lista.style.display!=='none'){ e.preventDefault(); e.stopPropagation(); cerrar(); }
+    else if(e.key==='Tab') cerrar();
+  });
+  document.addEventListener('scroll', e=>{ if(lista.style.display!=='none' && !lista.contains(e.target)) ubicar(); }, true);
+  window.addEventListener('resize', ()=>{ if(lista.style.display!=='none') ubicar(); });
+}
+// Muestra artículos parecidos ya cargados mientras se escribe el nombre
+function bfSugerirNombre(){
+  const box = document.getElementById('bf-a-similares'); if(!box) return;
+  const q = kxVal('bf-a-nombre').trim().toLowerCase();
+  if(kxVal('bf-a-id') || q.length < 3){ box.innerHTML=''; return; }
+  const sim = (DB.bienes||[]).filter(b=>String(b.nombre||'').toLowerCase().includes(q)).slice(0,4);
+  box.innerHTML = sim.length ? '⚠️ Ya cargados: ' + sim.map(b=>`<b>${kxEsc(b.nombre)}${b.medida?' '+kxEsc(b.medida):''}</b> (${kxEsc(b.sector)}: ${fmtN(b.cant)} ${kxEsc(b.uom||'')})`).join(' · ') : '';
+}
 // ── Interfaz ─────────────────────────────────────────────────────
 (function bfInyectarUI(){
   const btnStock = document.querySelector('.nav-btn[onclick*="\'inventario\'"]');
@@ -17511,8 +17581,6 @@ function bfTocar(b){
   if(main) main.insertAdjacentHTML('beforeend', page);
 
   const modales = `
-  <datalist id="bf-dl-cat">${BF_CATEGORIAS.map(c=>`<option value="${c[0]}">`).join('')}</datalist>
-  <datalist id="bf-dl-sector"></datalist>
   <div class="modal-overlay" id="bf-modal-art">
     <div class="modal" style="max-width:620px">
       <div class="modal-header"><span>🧰</span><h2 id="bf-art-titulo">Nuevo artículo</h2>
@@ -17520,21 +17588,20 @@ function bfTocar(b){
       <div class="modal-body"><input type="hidden" id="bf-a-id">
         <div class="form-grid">
           <div class="form-group span2"><label>Nombre del artículo *</label>
-            <input type="text" id="bf-a-nombre" placeholder="Ej: Lata enlozada, Carro bandejero 18 bandejas, Lavandina, Espátula"></div>
+            <input type="text" id="bf-a-nombre" autocomplete="off" oninput="bfSugerirNombre()" placeholder="Ej: Lata enlozada, Carro bandejero 18 bandejas, Lavandina, Espátula"><div id="bf-a-similares" style="font-size:11px;color:var(--texto-2);margin-top:4px"></div></div>
           <div class="form-group"><label>Categoría *</label>
-            <input type="text" id="bf-a-cat" list="bf-dl-cat" placeholder="Elegí o escribí una" onchange="bfSugerirTipo()"></div>
+            <input type="text" id="bf-a-cat" autocomplete="off" placeholder="Elegí o escribí una" onchange="bfSugerirTipo()"></div>
           <div class="form-group"><label>Tipo *</label>
             <select id="bf-a-tipo" onchange="bfArtTipoUI()"><option value="uso">🔧 Bien de uso (se cuenta y se da de baja)</option>
               <option value="consumible">🧽 Consumible (se gasta y se repone)</option></select></div>
           <div class="form-group"><label>Sector / ubicación *</label>
-            <input type="text" id="bf-a-sector" list="bf-dl-sector" placeholder="Ej: Panadería, Depósito"></div>
+            <input type="text" id="bf-a-sector" autocomplete="off" placeholder="Ej: Panadería, Depósito"></div>
           <div class="form-group"><label>Medida / modelo</label>
             <input type="text" id="bf-a-medida" placeholder="Ej: 60x40, 5 litros, 18 bandejas"></div>
           <div class="form-group" id="bf-a-cant-wrap"><label>Cantidad actual *</label>
             <input type="number" id="bf-a-cant" min="0" step="any" placeholder="0"></div>
           <div class="form-group"><label>Unidad</label>
-            <input type="text" id="bf-a-uom" list="bf-dl-uom" placeholder="unidades">
-            <datalist id="bf-dl-uom"><option value="unidades"><option value="litros"><option value="kg"><option value="bidones"><option value="packs"><option value="cajas"><option value="rollos"><option value="pares"></datalist></div>
+            <input type="text" id="bf-a-uom" autocomplete="off" placeholder="unidades"></div>
           <div class="form-group" id="bf-a-rep-wrap"><label>De esas, a reparar / dañadas</label>
             <input type="number" id="bf-a-rep" min="0" step="1" placeholder="0"></div>
           <div class="form-group" id="bf-a-min-wrap"><label>Stock mínimo (aviso de reposición)</label>
@@ -17566,7 +17633,7 @@ function bfTocar(b){
           <div class="form-group" id="bf-mv-rep-wrap"><label>De las contadas, a reparar / dañadas</label><input type="number" id="bf-mv-rep" min="0" step="1" oninput="bfMovUI(true)"></div>
           <div class="form-group" id="bf-mv-mot-wrap"><label>Motivo de la baja *</label>
             <select id="bf-mv-mot">${Object.entries(BF_MOTIVOS_BAJA).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
-          <div class="form-group" id="bf-mv-hacia-wrap"><label>Sector de destino *</label><input type="text" id="bf-mv-hacia" list="bf-dl-sector"></div>
+          <div class="form-group" id="bf-mv-hacia-wrap"><label>Sector de destino *</label><input type="text" id="bf-mv-hacia" autocomplete="off"></div>
           <div class="form-group" id="bf-mv-vu-wrap"><label>Precio unitario pagado ($)</label><input type="number" id="bf-mv-vu" min="0" step="any" placeholder="Opcional: actualiza el valor"></div>
           <div class="form-group span2"><label>Nota</label><textarea id="bf-mv-nota" placeholder="Detalle, a quién se entregó, dónde se reparó…"></textarea></div>
           <div class="form-group span2" id="bf-mv-preview" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px"></div>
@@ -17579,10 +17646,11 @@ function bfTocar(b){
     </div>
   </div>`;
   document.body.insertAdjacentHTML('beforeend', modales);
-  ['bf-modal-art','bf-modal-mov'].forEach(id=>{
-    const o = document.getElementById(id);
-    if(o) o.addEventListener('click', e=>{ if(e.target===o) o.classList.remove('open'); });
-  });
+  // v33.1: los formularios NO se cierran al hacer clic afuera (se perdía lo escrito).
+  bfCombo('bf-a-cat',    ()=>bfCategorias(), ()=>bfSugerirTipo());
+  bfCombo('bf-a-sector', ()=>bfSectores());
+  bfCombo('bf-a-uom',    ()=>bfUnidades());
+  bfCombo('bf-mv-hacia', ()=>bfSectores());
 })();
 
 (function(){
@@ -17610,8 +17678,6 @@ function bfLlenarFiltros(){
   const catsUsadas = bfCategorias().filter(c=>(DB.bienes||[]).some(b=>b.cat===c));
   fill('bf-f-cat', catsUsadas.map(c=>c), 'Todas las categorías');
   fill('bf-f-sector', bfSectores().filter(s=>(DB.bienes||[]).some(b=>b.sector===s)), 'Todos los sectores');
-  const dl = document.getElementById('bf-dl-sector');
-  if(dl) dl.innerHTML = bfSectores().map(s=>`<option value="${kxEsc(s)}">`).join('');
 }
 function bfRender(){
   ['bf-m-mes','bf-r-mes'].forEach(id=>{ const el=document.getElementById(id); if(el && !el.value) el.value = kxMesActual(); });
@@ -17711,7 +17777,7 @@ function bfAbrirArticulo(id, base){
   document.getElementById('bf-art-titulo').textContent = b ? `Editar: ${b.nombre}` : 'Nuevo artículo';
   document.getElementById('bf-a-borrar').style.display = (b && kxEsAdmin()) ? '' : 'none';
   document.getElementById('bf-a-otro').style.display = b ? 'none' : '';
-  bfArtTipoUI();
+  bfArtTipoUI(); bfSugerirNombre();
   abrirModal('bf-modal-art');
   setTimeout(()=>document.getElementById('bf-a-nombre').focus(), 80);
 }
@@ -17747,7 +17813,7 @@ function bfGuardarArticulo(otro){
     registrarAuditoria('Creación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Alta: ${fmtN(cant)} ${b.uom} en ${b.sector} (${b.cat})`);
     toast(`✅ ${b.nombre} cargado · ${fmtN(cant)} ${b.uom} en ${b.sector}`,'success');
     if(otro){
-      bfAbrirArticulo(null, { cat:d.cat, tipo:d.tipo, sector:d.sector, uom:d.uom });
+      bfAbrirArticulo(null, { cat:d.cat, tipo:d.tipo, sector:d.sector });
     } else cerrarModal('bf-modal-art');
   }
   bfRender();
