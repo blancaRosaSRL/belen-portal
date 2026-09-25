@@ -14104,6 +14104,7 @@ async function sincronizarNube(silencioso=false){
     }
 
     const dbServidor = dataServidor.db || {};
+    try{ kxNormalizarSinId(dbServidor); }catch(_){}
     let conflictos=0, fusionados=0;
 
     // 2. Fusionar registro por registro
@@ -14182,6 +14183,7 @@ async function sincronizarNube(silencioso=false){
     // Así recibimos también lo que cargaron otras PCs en este mismo sync
     if(dataPost.db){
       const dbFinal = dataPost.db;
+      try{ kxNormalizarSinId(dbFinal); }catch(_){}
       // FIX v33.1: fusionar (no reemplazar). Lo que se cargó en esta PC mientras
       // el servidor procesaba la subida no viene en la respuesta y antes se perdía.
       CLOUD_SYNC_ARRAYS.forEach(col=>{
@@ -14241,6 +14243,8 @@ async function sincronizarNube(silencioso=false){
 
   } catch(err){
     const msg = err.message||'';
+    try{ const bd=document.getElementById('sync-status-badge'); if(bd){ bd.style.display=''; bd.style.color='var(--alerta)'; bd.textContent = err.name==='AbortError' ? '⚠️ Sync: la nube no respondió' : '⚠️ Sync falló — reintenta sola'; } }catch(_){}
+    if(err.name==='AbortError'){ if(!silencioso) toast('⏱️ La nube tardó demasiado en responder. Se reintenta sola en 30 segundos.','error'); console.warn('Sync timeout'); return; }
     if(msg.includes('QuotaExceeded') || msg.includes('storage')){
       if(!silencioso) toast('⚠️ Espacio lleno — datos activos en memoria. Trabajá con normalidad, el sync guarda en la nube.','error');
     } else if(msg.includes('fetch') || msg.includes('network') || msg.includes('Failed') || msg.includes('token')){
@@ -14289,6 +14293,7 @@ async function pullSilencioso(){
     if(!data.ok || !data.db) return;
 
     const dbServidor = data.db;
+    try{ kxNormalizarSinId(dbServidor); }catch(_){}
     let hayNuevo = false;
 
     // Comparar registro por registro — solo aplicar lo que el servidor tiene y nosotros no
@@ -18053,6 +18058,145 @@ document.addEventListener('DOMContentLoaded', ()=>setTimeout(()=>{ try{ bfActual
 </script>
 
 <!-- ══════════════════ FIN MÓDULO v33 ══════════════════ -->
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// v33.4 — REPARACIÓN DE DUPLICADOS Y SINCRONIZACIÓN SEGURA
+// Causa: los registros sin identificador (historial de costos de recetas,
+// gastos y mix de ventas del Punto de Equilibrio, auditoría) se sumaban en
+// cada sincronización en vez de combinarse, y crecían sin freno (x3–x4 por sync).
+// Solución: cada registro recibe un identificador fijo calculado a partir de su
+// contenido (igual en todas las PC), se eliminan los duplicados, y la primera
+// sincronización después de reparar reemplaza la copia inflada de la nube.
+// Además: nunca corren dos sincronizaciones a la vez y hay tiempo límite.
+// ═══════════════════════════════════════════════════════════════════
+function kxHash(t){ let h=0x811c9dc5; t=String(t); for(let i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,0x01000193); } return (h>>>0).toString(36)+t.length.toString(36); }
+const KX_PREF_SINID = { historialCostosRecetas:'HCR', gastos:'GAS', mixVentas:'MIX', auditoria:'AUD' };
+function kxClaveSinId(col, r){
+  if(col==='historialCostosRecetas' && r.fecha) return 'HCR-'+r.fecha;          // uno por día
+  if(col==='auditoria') return 'AUD-'+(r.timestamp||r._ts||'')+'-'+kxHash((r.usuario||'')+'|'+(r.accion||'')+'|'+(r.elemento||'')+'|'+(r.detalle||''));
+  const c = {...r}; delete c.id; delete c._ts; delete c._v; delete c._by;
+  return (KX_PREF_SINID[col]||'SID')+'-'+kxHash(JSON.stringify(c));
+}
+// Asigna id a los registros que no tienen y elimina copias repetidas. Devuelve {col: eliminados}
+function kxNormalizarSinId(db){
+  const stats = {};
+  if(!db || typeof db!=='object') return stats;
+  const cols = [...new Set([...(typeof CLOUD_SYNC_ARRAYS!=='undefined'?CLOUD_SYNC_ARRAYS:[]), ...(typeof LS_KEYS_ARRAYS!=='undefined'?LS_KEYS_ARRAYS:[])])];
+  cols.forEach(col=>{
+    const arr = db[col];
+    if(!Array.isArray(arr) || !arr.length) return;
+    if(!arr.some(r=>r && typeof r==='object' && !r.id && !r.nro && !r.legajo)) return;
+    const vistos = new Map(), out = [];
+    arr.forEach(r=>{
+      if(!r || typeof r!=='object'){ return; }
+      if(r.id || r.nro || r.legajo){ out.push(r); return; }
+      const id = kxClaveSinId(col, r);
+      const previo = vistos.get(id);
+      if(previo === undefined){ r.id = id; vistos.set(id, out.length); out.push(r); }
+      else if((r._ts||0) > (out[previo]._ts||0)){ r.id = id; out[previo] = r; }   // queda el más nuevo
+    });
+    // Los que ya tenían el mismo id (de otra PC) también se unifican
+    const porId = new Map(); const final = [];
+    out.forEach(r=>{ const k=r.id||r.nro||r.legajo; if(!k || !String(k).match(/^(HCR|GAS|MIX|AUD|SID)-/)){ final.push(r); return; }
+      const p = porId.get(k); if(p===undefined){ porId.set(k, final.length); final.push(r); } else if((r._ts||0) > (final[p]._ts||0)) final[p] = r; });
+    const quitados = arr.length - final.length;
+    if(quitados > 0) stats[col] = quitados;
+    if(col==='auditoria') final.sort((a,b)=>(b.timestamp||b._ts||0)-(a.timestamp||a._ts||0));
+    db[col] = col==='auditoria' ? final.slice(0,500) : final;
+  });
+  return stats;
+}
+let _kxReparacion = null;
+(function(){
+  // 1) Reparar al cargar los datos de esta PC
+  const origCargar = window.cargarDesdeStorage;
+  window.cargarDesdeStorage = function(){
+    const r = origCargar.apply(this, arguments);
+    try{
+      const st = kxNormalizarSinId(DB);
+      const total = Object.values(st).reduce((a,b)=>a+b,0);
+      if(total > 0){
+        _kxReparacion = st;
+        try{ localStorage.setItem('kx_reparar_nube','1'); }catch(_){}
+        setTimeout(()=>{ try{ guardarEnStorage(); }catch(_){} }, 1500);
+        console.log('🧹 Duplicados eliminados al cargar:', st);
+      }
+    }catch(e){ console.warn('Reparación de duplicados:', e); }
+    return r;
+  };
+  // 2) Tiempo límite para las llamadas a la nube (antes podían quedar colgadas para siempre)
+  const origFetch = window.fetch;
+  window.fetch = function(url, opt){
+    try{
+      if(typeof SYNC_URL==='string' && String(url).startsWith(SYNC_URL) && !(opt && opt.signal) && typeof AbortController!=='undefined'){
+        const ac = new AbortController(); const t = setTimeout(()=>ac.abort(), 150000);
+        return origFetch.call(this, url, {...(opt||{}), signal: ac.signal}).finally(()=>clearTimeout(t));
+      }
+    }catch(_){}
+    return origFetch.apply(this, arguments);
+  };
+  // 3) Una sola sincronización a la vez + reemplazo de la copia inflada de la nube
+  let enCurso = false;
+  const origSync = window.sincronizarNube, origPull = window.pullSilencioso;
+  window.sincronizarNube = async function(silencioso){
+    if(enCurso){ if(!silencioso) toast('⏳ Ya hay una sincronización en curso, esperá a que termine','error'); return; }
+    enCurso = true;
+    try{
+      try{ kxNormalizarSinId(DB); }catch(_){}
+      if(localStorage.getItem('kx_reparar_nube')==='1') await kxReemplazarNube(silencioso);
+      else await origSync.apply(this, arguments);
+    } finally { enCurso = false; }
+  };
+  window.pullSilencioso = async function(){
+    if(enCurso || localStorage.getItem('kx_reparar_nube')==='1') return;
+    enCurso = true;
+    try{ await origPull.apply(this, arguments); } finally { enCurso = false; }
+  };
+  // Aviso al entrar si hubo reparación
+  const origIni = window.iniciarSesion;
+  window.iniciarSesion = function(){
+    const r = origIni.apply(this, arguments);
+    if(_kxReparacion){
+      const nombres = {historialCostosRecetas:'historial de costos de recetas', gastos:'gastos', mixVentas:'mix de ventas', auditoria:'auditoría'};
+      const det = Object.entries(_kxReparacion).map(([k,n])=>`${nombres[k]||k}: ${n.toLocaleString('es-AR')}`).join(' · ');
+      setTimeout(()=>toast(`🧹 Se eliminaron copias duplicadas (${det}). La próxima sincronización limpia la nube.`,'success'), 900);
+      try{ registrarAuditoria('Modificación','Reparación de datos','Duplicados eliminados: '+det); }catch(_){}
+      _kxReparacion = null;
+    }
+    return r;
+  };
+})();
+// Sube la base limpia de esta PC reemplazando la de la nube (una sola vez, tras reparar).
+// Las demás PC vuelven a aportar lo suyo en su próxima sincronización (mandan su base completa).
+async function kxReemplazarNube(silencioso){
+  if(!SYNC_ACTIVO) return;
+  const badge = document.getElementById('sync-status-badge');
+  if(badge){ badge.style.display=''; badge.style.color='var(--trigo-dk)'; badge.textContent='🧹 Limpiando la nube…'; }
+  if(!silencioso) toast('🧹 Subiendo la base limpia a la nube…','success');
+  try{
+    const payload = {};
+    CLOUD_SYNC_ARRAYS.forEach(k=>{ payload[k] = DB[k]; });
+    payload.configCargas = DB.configCargas;
+    const res = await fetch(SYNC_URL, { method:'POST', body: JSON.stringify({
+      accion:'guardarDBCompleta', db: payload,
+      guardadoPor:`${usuarioActual?.nombre||'?'} · reparación duplicados · ${new Date().toLocaleString('es-AR')}`,
+      usuario: usuarioActual?.nombre||'?' }) });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error||'Error al subir');
+    localStorage.removeItem('kx_reparar_nube');
+    limpiarQueue();
+    const hora = new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+    if(badge){ badge.style.color='var(--exito)'; badge.textContent=`✅ Nube limpia ${hora}`; }
+    toast('✅ Nube reparada: se reemplazó la copia con duplicados','success');
+    try{ registrarAuditoria('Sincronización','Reparación de la nube',`Base limpia subida por ${usuarioActual?.nombre}`); }catch(_){}
+  }catch(err){
+    if(badge){ badge.style.color='var(--alerta)'; badge.textContent = err.name==='AbortError' ? '⚠️ La nube no respondió' : '⚠️ Limpieza pendiente'; }
+    if(!silencioso) toast('⚠️ No se pudo limpiar la nube todavía: '+(err.message||err)+'. Se reintenta sola.','error');
+    console.warn('Reemplazo de nube:', err);
+  }
+}
+</script>
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
