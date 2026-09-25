@@ -16952,7 +16952,17 @@ function kxCorta(t, n){ t = String(t||''); return t.length>n ? t.slice(0,n-1)+'�
 // Barras agrupadas. grupos: ['Consumo',...]; series: [{nombre, color, valores:[...]}]; opt.linea: {nombre,color,valores,fmt}
 function kxSvgBarras(grupos, series, opt){
   opt = opt || {};
-  const W = 640, H = 300, L = 62, R = opt.linea ? 50 : 14, T = 40, B = 52;
+  const F = opt.fmt || kxFmtCorto, FL = opt.fmtLargo || (opt.fmt ? opt.fmt : fmt$);
+  const W = opt.W || 640, L = 62, R = opt.linea ? 50 : 14, T = 40;
+  const gw0 = (W-L-R) / Math.max(1, grupos.length);
+  const girar = gw0 < 62;                                   // muchas columnas: etiquetas inclinadas
+  const maxCh = Math.max(5, Math.floor(gw0/6.6));
+  const partir = t=>{ t = String(t||''); if(t.length <= maxCh) return [t];
+    const ps = t.split(/\s+/); const ls = ['']; ps.forEach(p=>{ const c = ls[ls.length-1]; if((c+' '+p).trim().length <= maxCh || !c) ls[ls.length-1] = (c+' '+p).trim(); else ls.push(p); });
+    return ls.length > 2 ? [ls[0], kxCorta(ls.slice(1).join(' '), maxCh)] : ls.map(x=>kxCorta(x, maxCh)); };
+  const dosRenglones = !girar && grupos.some(gr=>partir(gr).length > 1);
+  const B = girar ? 118 : (dosRenglones ? 66 : 52);
+  const H = (opt.H || 300) + (girar ? 60 : (dosRenglones ? 14 : 0));
   const pw = W-L-R, ph = H-T-B;
   const maxV = kxEscalaMax(Math.max(1, ...series.flatMap(x=>x.valores.map(v=>Math.max(0,Number(v)||0)))));
   const gw = pw / grupos.length, bw = Math.min(56, (gw*0.8)/series.length);
@@ -16961,16 +16971,18 @@ function kxSvgBarras(grupos, series, opt){
   for(let i=0;i<=4;i++){
     const v = maxV*i/4, yy = y(v);
     g += `<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="currentColor" stroke-opacity=".12"/>`;
-    g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity=".65">${kxFmtCorto(v)}</text>`;
+    g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity=".65">${F(v)}</text>`;
   }
   grupos.forEach((gr,i)=>{
     const x0 = L + gw*i + (gw - bw*series.length)/2;
     series.forEach((se,j)=>{
       const v = Number(se.valores[i])||0, x = x0 + j*bw, yy = y(v), h = T+ph-yy;
-      g += `<rect x="${x+2}" y="${yy}" width="${Math.max(1,bw-4)}" height="${Math.max(0,h)}" rx="5" fill="${se.color}"><title>${kxEsc(se.nombre)} · ${kxEsc(gr)}: ${fmt$(v)}</title></rect>`;
-      if(opt.etiquetas !== false && Math.abs(v) >= 0.005) g += `<text x="${x+bw/2}" y="${yy-6}" text-anchor="middle" font-size="${series.length>2?9:11}" font-weight="700" fill="currentColor">${kxFmtCorto(v)}</text>`;
+      g += `<rect x="${x+2}" y="${yy}" width="${Math.max(1,bw-4)}" height="${Math.max(0,h)}" rx="5" fill="${se.color}"><title>${kxEsc(se.nombre)} · ${kxEsc(gr)}: ${FL(v)}</title></rect>`;
+      if(opt.etiquetas !== false && Math.abs(v) >= 0.005 && bw >= 14) g += `<text x="${x+bw/2}" y="${yy-6}" text-anchor="middle" font-size="${bw<24?9.5:(series.length>2?10:11)}" font-weight="700" fill="currentColor">${F(v)}</text>`;
     });
-    g += `<text x="${L+gw*i+gw/2}" y="${T+ph+18}" text-anchor="middle" font-size="11.5" fill="currentColor" fill-opacity=".85">${kxEsc(kxCorta(gr,18))}</text>`;
+    const cx = L+gw*i+gw/2;
+    if(girar) g += `<text transform="translate(${cx+4},${T+ph+14}) rotate(-38)" text-anchor="end" font-size="11.5" fill="currentColor" fill-opacity=".9"><title>${kxEsc(gr)}</title>${kxEsc(kxCorta(gr,22))}</text>`;
+    else partir(gr).forEach((ln,k)=>{ g += `<text x="${cx}" y="${T+ph+18+k*14}" text-anchor="middle" font-size="11.5" fill="currentColor" fill-opacity=".9"><title>${kxEsc(gr)}</title>${kxEsc(ln)}</text>`; });
   });
   if(opt.linea){
     const ln = opt.linea, maxL = kxEscalaMax(Math.max(1, ...ln.valores));
@@ -17005,34 +17017,38 @@ function kxSvgDona(items, opt){
   items.forEach((it,i)=>{
     const col = pal[i % pal.length];
     const frac = it.valor/total, a1 = a0 + frac*2*Math.PI;
-    if(frac >= 0.9999){ g += `<circle cx="${cx}" cy="${cy}" r="${(r+ri)/2}" fill="none" stroke="${col}" stroke-width="${r-ri}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)}</title></circle>`; }
+    if(frac >= 0.9999){ g += `<circle cx="${cx}" cy="${cy}" r="${(r+ri)/2}" fill="none" stroke="${col}" stroke-width="${r-ri}"><title>${kxEsc(it.nombre)}: ${(opt.fmt||fmt$)(it.valor)}</title></circle>`; }
     else {
       const big = frac > .5 ? 1 : 0, P = (a,rr)=>[cx+rr*Math.cos(a), cy+rr*Math.sin(a)];
       const [x1,y1]=P(a0,r),[x2,y2]=P(a1,r),[x3,y3]=P(a1,ri),[x4,y4]=P(a0,ri);
-      g += `<path d="M${x1},${y1} A${r},${r} 0 ${big} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${big} 0 ${x4},${y4} Z" fill="${col}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)} (${(frac*100).toFixed(1)}%)</title></path>`;
+      g += `<path d="M${x1},${y1} A${r},${r} 0 ${big} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${big} 0 ${x4},${y4} Z" fill="${col}"><title>${kxEsc(it.nombre)}: ${(opt.fmt||fmt$)(it.valor)} (${(frac*100).toFixed(1)}%)</title></path>`;
     }
     const ly = 26 + i*25;
     g += `<rect x="245" y="${ly-11}" width="12" height="12" rx="3" fill="${col}"/>
       <text x="263" y="${ly}" font-size="12" fill="currentColor">${kxEsc(kxCorta(it.nombre,22))}</text>
-      <text x="${W-6}" y="${ly}" text-anchor="end" font-size="12" font-weight="700" fill="currentColor">${kxFmtCorto(it.valor)} · ${(frac*100).toFixed(0)}%</text>`;
+      <text x="${W-6}" y="${ly}" text-anchor="end" font-size="12" font-weight="700" fill="currentColor">${(opt.fmt||kxFmtCorto)(it.valor)} · ${(frac*100).toFixed(0)}%</text>`;
     a0 = a1;
   });
-  g += `<text x="${cx}" y="${cy-2}" text-anchor="middle" font-size="16" font-weight="800" fill="currentColor">${kxFmtCorto(total)}</text>
+  g += `<text x="${cx}" y="${cy-2}" text-anchor="middle" font-size="16" font-weight="800" fill="currentColor">${(opt.fmt||kxFmtCorto)(total)}</text>
         <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".65">${kxEsc(opt.centro||'total')}</text>`;
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
 }
 
 // Barras horizontales para el ranking de pérdidas
-function kxSvgRanking(items, color){
+function kxSvgRanking(items, color, opt){
   if(!items.length) return '';
-  const W = 640, fila = 26, H = 14 + items.length*fila, L = 180, R = 80;
+  opt = opt || {};
+  const F = opt.fmt || kxFmtCorto, FL = opt.fmtLargo || (opt.fmt ? opt.fmt : fmt$);
+  const W = opt.W || 640, fila = opt.W ? 30 : 26, H = 14 + items.length*fila;
+  const maxN = opt.W ? 40 : 24;
+  const L = Math.min(opt.W ? 440 : 180, Math.max(120, 24 + (4 + Math.max(...items.map(x=>Math.min(maxN, String(x.nombre||'').length))))*(opt.W?7.8:6.6))), R = 90;
   const max = Math.max(...items.map(x=>x.valor), 1);
   let g = '';
   items.forEach((it,i)=>{
     const y = 8 + i*fila, w = (it.valor/max)*(W-L-R);
-    g += `<text x="${L-8}" y="${y+14}" text-anchor="end" font-size="11.5" fill="currentColor">${i+1}. ${kxEsc(kxCorta(it.nombre,24))}</text>
-      <rect x="${L}" y="${y}" width="${Math.max(2,w)}" height="18" rx="4" fill="${color}"><title>${kxEsc(it.nombre)}: ${fmt$(it.valor)}</title></rect>
-      <text x="${L+w+6}" y="${y+14}" font-size="11" font-weight="700" fill="currentColor">${kxFmtCorto(it.valor)}</text>`;
+    g += `<text x="${L-10}" y="${y+14}" text-anchor="end" font-size="${opt.W?13:11.5}" fill="currentColor"><title>${kxEsc(it.nombre)}</title>${i+1}. ${kxEsc(kxCorta(it.nombre,maxN))}</text>
+      <rect x="${L}" y="${y}" width="${Math.max(2,w)}" height="${opt.W?20:18}" rx="4" fill="${color}"><title>${kxEsc(it.nombre)}: ${FL(it.valor)}</title></rect>
+      <text x="${L+w+8}" y="${y+15}" font-size="${opt.W?13:11}" font-weight="700" fill="currentColor">${F(it.valor)}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
 }
@@ -17365,7 +17381,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '33.6';
+const BELEN_BUILD = '33.7';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -18238,6 +18254,29 @@ async function kxReemplazarNube(silencioso){
 const GRF_ROLES = ['Dueño','Programador'];
 const GRF_AZUL = '#5B8DEF', GRF_NAR = '#F5B96B', GRF_ROJO = '#D9534F', GRF_VERDE = '#5FA85F', GRF_VIOL = '#9B6BC8';
 const GRF_MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function grfN(v){ return Math.round(Number(v)||0).toLocaleString('es-AR'); }
+// Versiones grandes (ancho completo) de los gráficos
+function grfBarras(grupos, series, opt){ return kxSvgBarras(grupos, series, Object.assign({W:1000, H:330}, opt||{})); }
+function grfRanking(items, color, opt){ return kxSvgRanking(items, color, Object.assign({W:1000}, opt||{})); }
+function grfDona(items, opt){ return `<div style="max-width:760px;margin:0 auto">${kxSvgDona(items, opt)}</div>`; }
+// Stock vs. mínimo: una fila por insumo, barra del stock y marca del mínimo
+function grfStockMin(items){
+  if(!items.length) return '';
+  const W = 1000, fila = 34, L = Math.min(400, Math.max(160, 24 + Math.max(...items.map(i=>Math.min(38,String(i.nombre).length)))*7.8)), R = 210, H = 44 + items.length*fila;
+  const max = Math.max(1, ...items.map(i=>Math.max(i.stock, i.min)))*1.1, px = v=>L + (Math.max(0,v)/max)*(W-L-R);
+  let g = `<circle cx="${L}" cy="14" r="7" fill="${GRF_ROJO}"/><text x="${L+13}" y="18" font-size="13" fill="currentColor">Stock actual</text>
+    <line x1="${L+120}" x2="${L+120}" y1="6" y2="22" stroke="#2C1810" stroke-width="3"/><text x="${L+130}" y="18" font-size="13" fill="currentColor">Stock mínimo</text>`;
+  items.forEach((it,i)=>{
+    const y = 36 + i*fila, falta = Math.max(0, it.min - it.stock);
+    const col = it.stock <= 0 ? '#A93226' : (it.stock < it.min ? GRF_ROJO : GRF_NAR);
+    g += `<text x="${L-10}" y="${y+16}" text-anchor="end" font-size="13" fill="currentColor"><title>${kxEsc(it.nombre)}</title>${kxEsc(kxCorta(it.nombre,38))}</text>
+      <rect x="${L}" y="${y+2}" width="${W-L-R}" height="20" rx="4" fill="currentColor" fill-opacity=".06"/>
+      <rect x="${L}" y="${y+2}" width="${Math.max(2,px(it.stock)-L)}" height="20" rx="4" fill="${col}"><title>${kxEsc(it.nombre)}: stock ${grfN(it.stock)} ${kxEsc(it.uom)} · mínimo ${grfN(it.min)}</title></rect>
+      <line x1="${px(it.min)}" x2="${px(it.min)}" y1="${y-2}" y2="${y+26}" stroke="#2C1810" stroke-width="3"/>
+      <text x="${W-R+10}" y="${y+16}" font-size="13" font-weight="700" fill="currentColor">${grfN(it.stock)} / ${grfN(it.min)} ${kxEsc(it.uom==='unidades'?'u.':kxCorta(it.uom||'',8))}${falta>0?` <tspan fill="${GRF_ROJO}">· faltan ${grfN(falta)}</tspan>`:''}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">${g}</svg>`;
+}
 function grfVisible(){ return !!(usuarioActual && GRF_ROLES.includes(usuarioActual.rol)); }
 function grfMeses(n){ const out=[]; const d=new Date(); d.setDate(1);
   for(let i=n-1;i>=0;i--){ const x=new Date(d.getFullYear(), d.getMonth()-i, 1); out.push(x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')); } return out; }
@@ -18296,23 +18335,23 @@ function grfDashboard(){
   const prodN = ms.map(m=>ords.filter(o=>grfMes(o.fecha)===m).length);
   const cards = [
     grfCard('Compras vs. consumo de materia prima','Últimos 6 meses, según el kardex',
-      hayK ? kxSvgBarras(ms.map(grfEtiq), [{nombre:'Compras',color:GRF_AZUL,valores:k.map(x=>x.compras)},{nombre:'Consumo',color:GRF_NAR,valores:k.map(x=>x.consumo)},{nombre:'Mermas',color:GRF_ROJO,valores:k.map(x=>x.merma)}], {tituloEje:'Mes'}) : grfVacio('Sin movimientos de kardex todavía')),
-    grfCard('Valor del stock de materia prima por categoría','Stock actual × último precio', kxSvgDona(grfStockPorCat(), {centro:'en stock', vacio:'Sin stock valorizado'})),
+      hayK ? grfBarras(ms.map(grfEtiq), [{nombre:'Compras',color:GRF_AZUL,valores:k.map(x=>x.compras)},{nombre:'Consumo',color:GRF_NAR,valores:k.map(x=>x.consumo)},{nombre:'Mermas',color:GRF_ROJO,valores:k.map(x=>x.merma)}], {tituloEje:'Mes'}) : grfVacio('Sin movimientos de kardex todavía')),
+    grfCard('Valor del stock de materia prima por categoría','Stock actual × último precio', grfDona(grfStockPorCat(), {centro:'en stock', vacio:'Sin stock valorizado'})),
     grfCard('Producción ejecutada','Costo en materia prima de lo producido y cantidad de órdenes',
-      prodV.some(v=>v>0) ? kxSvgBarras(ms.map(grfEtiq), [{nombre:'Costo producido',color:GRF_VERDE,valores:prodV}], {linea:{nombre:'Órdenes',color:GRF_VIOL,valores:prodN,fmt:v=>String(Math.round(v))}, tituloEje:'Mes'}) : grfVacio('Sin órdenes ejecutadas en los últimos 6 meses'))
+      prodV.some(v=>v>0) ? grfBarras(ms.map(grfEtiq), [{nombre:'Costo producido',color:GRF_VERDE,valores:prodV}], {linea:{nombre:'Órdenes',color:GRF_VIOL,valores:prodN,fmt:v=>String(Math.round(v))}, tituloEje:'Mes'}) : grfVacio('Sin órdenes ejecutadas en los últimos 6 meses'))
   ];
   grfPanel('dashboard', cards);
 }
 function grfInventario(){
   if(!grfVisible()) return grfPanel('inventario');
   const top = (DB.inventario||[]).map(i=>({nombre:i.desc, valor:(Number(i.stock)||0)*(Number(i.precio)||0)})).filter(x=>x.valor>0).sort((a,b)=>b.valor-a.valor).slice(0,10);
-  const bajo = (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo' && Number(i.min)>0 && Number(i.stock)<=Number(i.min)).slice(0,8);
+  const bajo = (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo' && Number(i.min)>0 && Number(i.stock)<=Number(i.min)).sort((a,b)=>(a.stock/a.min)-(b.stock/b.min)).slice(0,20);
   const cards = [
-    grfCard('Valor del stock por categoría','', kxSvgDona(grfStockPorCat(), {centro:'en stock', vacio:'Sin stock valorizado'})),
-    grfCard('Los 10 insumos con más plata inmovilizada','Stock × precio', top.length ? kxSvgRanking(top, GRF_AZUL) : grfVacio()),
+    grfCard('Valor del stock por categoría','', grfDona(grfStockPorCat(), {centro:'en stock', vacio:'Sin stock valorizado'})),
+    grfCard('Los 10 insumos con más plata inmovilizada','Stock × precio', top.length ? grfRanking(top, GRF_AZUL) : grfVacio()),
   ];
-  if(bajo.length) cards.push(grfCard('Insumos bajo mínimo: stock vs. mínimo','En unidades de cada insumo',
-    kxSvgBarras(bajo.map(i=>i.desc), [{nombre:'Stock',color:GRF_ROJO,valores:bajo.map(i=>Number(i.stock)||0)},{nombre:'Mínimo',color:GRF_NAR,valores:bajo.map(i=>Number(i.min)||0)}]).replace(/\$/g,'')));
+  if(bajo.length) cards.push(grfCard(`Insumos en el mínimo o por debajo (${bajo.length})`,'La barra es el stock actual; la línea oscura marca el mínimo. Ordenados por lo que más falta.',
+    grfStockMin(bajo.map(i=>({nombre:i.desc, uom:i.uom, stock:Number(i.stock)||0, min:Number(i.min)||0})).sort((a,b)=>(a.stock/a.min)-(b.stock/b.min)))));
   grfPanel('inventario', cards);
 }
 function grfMateria(){
@@ -18325,9 +18364,9 @@ function grfMateria(){
   const m6 = grfMeses(6), tot = m6.map(m=>mp.filter(x=>grfMes(x.fecha)===m).reduce((s,x)=>s+val(x),0));
   const cards = [
     grfCard('Compras por proveedor: mes anterior vs. este mes','Los 6 proveedores con más compras · con IVA',
-      provs.length ? kxSvgBarras(provs, [{nombre:grfEtiq(ant),color:GRF_NAR,valores:provs.map(p=>suma(p,ant))},{nombre:grfEtiq(act),color:GRF_AZUL,valores:provs.map(p=>suma(p,act))}]) : grfVacio('Sin ingresos en los últimos dos meses')),
-    grfCard('Total comprado por mes','Últimos 6 meses · con IVA', tot.some(v=>v>0) ? kxSvgBarras(m6.map(grfEtiq), [{nombre:'Compras',color:GRF_AZUL,valores:tot}]) : grfVacio()),
-    grfCard('Compras por categoría · este mes','', kxSvgDona(grfSumaPor(mp.filter(x=>grfMes(x.fecha)===act), x=>x.cat, val), {centro:'este mes', vacio:'Sin compras este mes'}))
+      provs.length ? grfBarras(provs, [{nombre:grfEtiq(ant),color:GRF_NAR,valores:provs.map(p=>suma(p,ant))},{nombre:grfEtiq(act),color:GRF_AZUL,valores:provs.map(p=>suma(p,act))}]) : grfVacio('Sin ingresos en los últimos dos meses')),
+    grfCard('Total comprado por mes','Últimos 6 meses · con IVA', tot.some(v=>v>0) ? grfBarras(m6.map(grfEtiq), [{nombre:'Compras',color:GRF_AZUL,valores:tot}]) : grfVacio()),
+    grfCard('Compras por categoría · este mes','', grfDona(grfSumaPor(mp.filter(x=>grfMes(x.fecha)===act), x=>x.cat, val), {centro:'este mes', vacio:'Sin compras este mes'}))
   ];
   grfPanel('materia', cards);
 }
@@ -18337,9 +18376,9 @@ function grfPedidos(){
   const porEstado = grfSumaPor(ped.filter(p=>grfMes(p.fecha)===ms[5]), p=>p.estado, p=>Number(p.total)||0);
   const cards = [
     grfCard('Pedidos a proveedores por mes','Monto pedido · últimos 6 meses',
-      ped.length ? kxSvgBarras(ms.map(grfEtiq), [{nombre:'Pedido',color:GRF_AZUL,valores:ms.map(m=>ped.filter(p=>grfMes(p.fecha)===m).reduce((s,p)=>s+(Number(p.total)||0),0))}]) : grfVacio()),
-    grfCard('Pedidos de este mes por estado','', kxSvgDona(porEstado, {centro:'este mes', vacio:'Sin pedidos este mes'})),
-    grfCard('Proveedores con más pedidos','Últimos 6 meses', (()=>{ const t=grfSumaPor(ped.filter(p=>ms.includes(grfMes(p.fecha))), p=>p.proveedor, p=>Number(p.total)||0).slice(0,8); return t.length?kxSvgRanking(t, GRF_NAR):grfVacio(); })())
+      ped.length ? grfBarras(ms.map(grfEtiq), [{nombre:'Pedido',color:GRF_AZUL,valores:ms.map(m=>ped.filter(p=>grfMes(p.fecha)===m).reduce((s,p)=>s+(Number(p.total)||0),0))}]) : grfVacio()),
+    grfCard('Pedidos de este mes por estado','', grfDona(porEstado, {centro:'este mes', vacio:'Sin pedidos este mes'})),
+    grfCard('Proveedores con más pedidos','Últimos 6 meses', (()=>{ const t=grfSumaPor(ped.filter(p=>ms.includes(grfMes(p.fecha))), p=>p.proveedor, p=>Number(p.total)||0).slice(0,8); return t.length?grfRanking(t, GRF_NAR):grfVacio(); })())
   ];
   grfPanel('pedidos', cards);
 }
@@ -18352,10 +18391,10 @@ function grfProduccion(){
   const estados = ['Planificada','En proceso','Ejecutada'].map(e=>({nombre:e, valor:(DB.ordenes||[]).filter(o=>o.estado===e && grfMes(o.fecha)===act).length}));
   const cards = [
     grfCard('Costo en materia prima de lo producido','Órdenes ejecutadas · últimos 6 meses',
-      ords.length ? kxSvgBarras(ms.map(grfEtiq), [{nombre:'Costo producido',color:GRF_VERDE,valores:ms.map(m=>ords.filter(o=>grfMes(o.fecha)===m).reduce((s,o)=>s+grfCostoOrden(o),0))}], {linea:{nombre:'Órdenes',color:GRF_VIOL,valores:ms.map(m=>ords.filter(o=>grfMes(o.fecha)===m).length),fmt:v=>String(Math.round(v))}}) : grfVacio('Sin órdenes ejecutadas')),
+      ords.length ? grfBarras(ms.map(grfEtiq), [{nombre:'Costo producido',color:GRF_VERDE,valores:ms.map(m=>ords.filter(o=>grfMes(o.fecha)===m).reduce((s,o)=>s+grfCostoOrden(o),0))}], {linea:{nombre:'Órdenes',color:GRF_VIOL,valores:ms.map(m=>ords.filter(o=>grfMes(o.fecha)===m).length),fmt:v=>String(Math.round(v))}}) : grfVacio('Sin órdenes ejecutadas')),
     grfCard('Productos más producidos: mes anterior vs. este mes','Cantidad (lotes o piezas)',
-      topAct.length ? kxSvgBarras(topAct, [{nombre:grfEtiq(ant),color:GRF_NAR,valores:topAct.map(p=>cantDe(p,ant))},{nombre:grfEtiq(act),color:GRF_AZUL,valores:topAct.map(p=>cantDe(p,act))}]).replace(/\$/g,'') : grfVacio('Sin producción este mes')),
-    grfCard('Órdenes de este mes por estado','', estados.some(e=>e.valor) ? kxSvgDona(estados, {centro:'órdenes', colores:[GRF_NAR,GRF_AZUL,GRF_VERDE]}).replace(/\$/g,'') : grfVacio('Sin órdenes este mes'))
+      topAct.length ? grfBarras(topAct, [{nombre:grfEtiq(ant),color:GRF_NAR,valores:topAct.map(p=>cantDe(p,ant))},{nombre:grfEtiq(act),color:GRF_AZUL,valores:topAct.map(p=>cantDe(p,act))}], {fmt:grfN}) : grfVacio('Sin producción este mes')),
+    grfCard('Órdenes de este mes por estado','', estados.some(e=>e.valor) ? grfDona(estados, {centro:'órdenes', colores:[GRF_NAR,GRF_AZUL,GRF_VERDE], fmt:grfN}) : grfVacio('Sin órdenes este mes'))
   ];
   grfPanel('produccion', cards);
 }
@@ -18366,8 +18405,8 @@ function grfEmpleados(){
   const c = e=>{ try{ return calcularCostoEmpleado(e); }catch(_){ return {bruto:0,cargas:0,total:0}; } };
   const cards = [
     grfCard('Costo laboral mensual por sucursal','Sueldo bruto y cargas sociales · empleados activos y de licencia',
-      sucs.length ? kxSvgBarras(sucs.map(s=>s.nombre), [{nombre:'Bruto',color:GRF_AZUL,valores:sucs.map(s=>act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).bruto,0))},{nombre:'Cargas',color:GRF_NAR,valores:sucs.map(s=>act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).cargas,0))}]) : grfVacio('Sin empleados cargados')),
-    grfCard('Distribución del costo laboral','', kxSvgDona(sucs.map(s=>({nombre:s.nombre, valor:act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).total,0)})), {centro:'por mes'}))
+      sucs.length ? grfBarras(sucs.map(s=>s.nombre), [{nombre:'Bruto',color:GRF_AZUL,valores:sucs.map(s=>act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).bruto,0))},{nombre:'Cargas',color:GRF_NAR,valores:sucs.map(s=>act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).cargas,0))}]) : grfVacio('Sin empleados cargados')),
+    grfCard('Distribución del costo laboral','', grfDona(sucs.map(s=>({nombre:s.nombre, valor:act.filter(e=>e.sucursalId===s.id).reduce((t,e)=>t+c(e).total,0)})), {centro:'por mes'}))
   ];
   grfPanel('empleados', cards);
 }
@@ -18378,7 +18417,7 @@ function grfRemitos(){
   const pal = [GRF_AZUL,GRF_NAR,GRF_VERDE,GRF_VIOL,GRF_ROJO];
   const cards = [
     grfCard('Remitos enviados por destino','Cantidad de remitos · últimos 6 meses',
-      dest.length ? kxSvgBarras(ms.map(grfEtiq), dest.map((d,i)=>({nombre:d,color:pal[i],valores:ms.map(m=>rem.filter(r=>r.destino===d && grfMes(r.fecha)===m).length)}))).replace(/\$/g,'') : grfVacio('Sin remitos en los últimos 6 meses'))
+      dest.length ? grfBarras(ms.map(grfEtiq), dest.map((d,i)=>({nombre:d,color:pal[i],valores:ms.map(m=>rem.filter(r=>r.destino===d && grfMes(r.fecha)===m).length)})), {fmt:grfN}) : grfVacio('Sin remitos en los últimos 6 meses'))
   ];
   grfPanel('remitos', cards);
 }
@@ -18393,9 +18432,9 @@ function grfBienes(){
   const bajasM = ms.map(m=>mv.filter(x=>x.tipo==='baja' && grfMes(x.f)===m).reduce((s,x)=>s+(Number(x.d)||0)*(Number(x.vu)||0),0));
   const div = document.createElement('div'); div.id='grf-bienes-in'; div.className='card grf-panel';
   div.innerHTML = `<div class="card-header"><h3>📊 Análisis gráfico <span style="font-size:11px;font-weight:400;color:var(--texto-2)">· vista de dueños</span></h3></div><div class="grf-grid">${[
-    grfCard('Valor del inventario de fábrica por categoría','Cantidad × valor unitario estimado', kxSvgDona(valCat, {centro:'valor total', vacio:'Cargá valores unitarios para ver este gráfico'})),
-    grfCard('Gasto en consumibles vs. pérdidas por bajas','Últimos 6 meses', (consumo.some(v=>v)||bajasM.some(v=>v)) ? kxSvgBarras(ms.map(grfEtiq), [{nombre:'Consumo limpieza/descartables',color:GRF_AZUL,valores:consumo},{nombre:'Bajas (roturas, pérdidas…)',color:GRF_ROJO,valores:bajasM}]) : grfVacio('Sin consumos ni bajas valorizados')),
-    grfCard('Bajas de este mes por motivo','', bajasMot.length ? kxSvgRanking(bajasMot, GRF_ROJO) : grfVacio('Sin bajas este mes'))
+    grfCard('Valor del inventario de fábrica por categoría','Cantidad × valor unitario estimado', grfDona(valCat, {centro:'valor total', vacio:'Cargá valores unitarios para ver este gráfico'})),
+    grfCard('Gasto en consumibles vs. pérdidas por bajas','Últimos 6 meses', (consumo.some(v=>v)||bajasM.some(v=>v)) ? grfBarras(ms.map(grfEtiq), [{nombre:'Consumo limpieza/descartables',color:GRF_AZUL,valores:consumo},{nombre:'Bajas (roturas, pérdidas…)',color:GRF_ROJO,valores:bajasM}]) : grfVacio('Sin consumos ni bajas valorizados')),
+    grfCard('Bajas de este mes por motivo','', bajasMot.length ? grfRanking(bajasMot, GRF_ROJO) : grfVacio('Sin bajas este mes'))
   ].join('')}</div>`;
   box.prepend(div);
 }
@@ -18427,10 +18466,11 @@ const GRF_PAGINAS = { dashboard:grfDashboard, inventario:grfInventario, materia:
 </script>
 <style>
   .grf-panel{margin-bottom:18px}
-  .grf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;padding:6px 14px 16px}
-  .grf-item{background:var(--crema, rgba(0,0,0,.02));border:1px solid var(--borde, rgba(0,0,0,.08));border-radius:12px;padding:12px 12px 6px;min-width:0}
-  .grf-tit{font-weight:800;font-size:14px;margin-bottom:2px}
-  .grf-sub{font-size:11px;color:var(--texto-2);margin-bottom:6px}
+  .grf-grid{display:grid;grid-template-columns:1fr;gap:16px;padding:8px 16px 18px}
+  .grf-item{background:var(--crema, rgba(0,0,0,.02));border:1px solid var(--borde, rgba(0,0,0,.08));border-radius:12px;padding:14px 18px 10px;min-width:0}
+  .grf-item svg{max-width:1100px;margin:0 auto}
+  .grf-tit{font-weight:800;font-size:16px;margin-bottom:2px}
+  .grf-sub{font-size:12.5px;color:var(--texto-2);margin-bottom:8px}
   @media (max-width:760px){ .grf-grid{grid-template-columns:1fr} }
   @media print{ .grf-item{break-inside:avoid} }
 </style>
