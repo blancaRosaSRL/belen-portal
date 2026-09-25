@@ -17385,6 +17385,594 @@ function kxRenderCierres(){
   }).join('');
 }
 </script>
+<!-- ═══════════════ INVENTARIO DE FÁBRICA (bienes de uso y limpieza) ═══════════════ -->
+<style>
+  .bf-cat-row td{background:var(--miga-dk);font-weight:700;font-size:12px;padding:8px 14px!important;letter-spacing:.3px}
+  .bf-rep{display:inline-block;background:var(--naranja-lt);color:var(--naranja);border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:6px}
+  .bf-bajo{display:inline-block;background:var(--alerta-lt);color:var(--alerta);border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:6px}
+  .bf-tipo{font-size:10px;color:var(--texto-2)}
+  .bf-acc{display:flex;gap:4px;flex-wrap:nowrap}
+  .bf-acc button{font-size:11px;padding:4px 8px}
+  #page-bienes tr.bf-item{cursor:pointer}
+  #page-bienes tr.bf-item:hover td{background:var(--trigo-lt)}
+</style>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// INVENTARIO DE FÁBRICA
+// Limpieza (se consume y se repone) y bienes de uso (herramientas, carros,
+// latas, moldes, máquinas…) con su cantidad, estado y ubicación por sector.
+// ═══════════════════════════════════════════════════════════════════
+DB.bienes            = DB.bienes            || [];
+DB.bienesMovimientos = DB.bienesMovimientos || [];
+['bienes','bienesMovimientos'].forEach(k=>{
+  if(!LS_KEYS_ARRAYS.includes(k)) LS_KEYS_ARRAYS.push(k);
+  if(!CLOUD_SYNC_ARRAYS.includes(k)) CLOUD_SYNC_ARRAYS.push(k);
+});
+PAGE_TITLES.bienes = 'Inventario de Fábrica';
+['Administración','Producción','Logística'].forEach(r=>{
+  if(Array.isArray(PERMISOS_ROL[r]) && !PERMISOS_ROL[r].includes('bienes')) PERMISOS_ROL[r].push('bienes');
+});
+
+const BF_CATEGORIAS = [
+  ['Limpieza','🧽','consumible'], ['Herramientas','🔧','uso'], ['Carros y bandejeros','🛒','uso'],
+  ['Latas enlozadas','🍞','uso'], ['Latas perforadas','🕳️','uso'], ['Moldes y aros','🥧','uso'],
+  ['Utensilios','🥄','uso'], ['Maquinaria y equipos','⚙️','uso'], ['Recipientes y envases','🪣','uso'],
+  ['Indumentaria y protección','🧤','uso'], ['Mobiliario','🪑','uso'], ['Descartables','🧻','consumible'], ['Otros','📌','uso']
+];
+const BF_SECTORES = ['Panadería','Pastelería','Repostería','Sandwichería','Frituras','Depósito','Cámara de frío','Expedición','Limpieza','Oficina','General'];
+const BF_MOTIVOS_BAJA = { rotura:'💥 Rotura', desgaste:'🕰️ Desgaste / fin de vida útil', perdida:'❓ Pérdida / extravío', robo:'🚨 Robo', descarte:'🗑️ Descarte / reemplazo', otro:'📌 Otro' };
+const BF_TIPOS_MOV = {
+  ingreso:'📥 Ingreso / compra', consumo:'📤 Consumo', baja:'🗑️ Baja', conteo:'🔢 Conteo físico',
+  reparar:'🛠️ Pasa a reparación', reparado:'✅ Vuelve reparado', traslado:'🔀 Traslado', alta:'🆕 Alta'
+};
+function bfIcono(cat){ const c = BF_CATEGORIAS.find(x=>x[0].toLowerCase()===String(cat||'').toLowerCase()); return c ? c[1] : '📌'; }
+function bfTipoDeCat(cat){ const c = BF_CATEGORIAS.find(x=>x[0].toLowerCase()===String(cat||'').toLowerCase()); return c ? c[2] : 'uso'; }
+function bfGet(id){ return (DB.bienes||[]).find(b=>b.id===id) || null; }
+function bfUsuario(){ return usuarioActual ? (getAlias(usuarioActual.id) || usuarioActual.nombre) : '—'; }
+function bfNuevoId(){
+  const n = (DB.bienes||[]).reduce((m,b)=>Math.max(m, parseInt(String(b.id).replace(/\D/g,''),10)||0), 0) + 1;
+  return 'BF' + String(n).padStart(4,'0');
+}
+function bfNum(v){ return +(Number(v)||0).toFixed(3); }
+function bfBajoMinimo(b){ return b.tipo==='consumible' && Number(b.min)>0 && Number(b.cant) <= Number(b.min); }
+function bfValor(b){ return (Number(b.cant)||0) * (Number(b.valor)||0); }
+
+function bfRegistrarMov(b, o){
+  const mov = {
+    id: 'BM' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6).toUpperCase(),
+    f: o.fecha || kxHoy(), bien: b.id, nb: b.nombre, cat: b.cat, sector: b.sector,
+    tipo: o.tipo, d: bfNum(o.d||0), res: bfNum(b.cant), rep: bfNum(b.rep||0),
+    mot: o.mot || '', hacia: o.hacia || '', vu: +(Number(o.vu)||0).toFixed(2),
+    nota: o.nota || '', u: bfUsuario(), _ts: Date.now()
+  };
+  DB.bienesMovimientos.push(mov);
+  try{ encolarCambio('bienesMovimientos','upsert',{id:mov.id}); }catch(_){}
+  return mov;
+}
+function bfTocar(b){
+  b._ts = Date.now();
+  DB.bienes = DB.bienes.slice();
+  try{ encolarCambio('bienes','upsert',{id:b.id}); }catch(_){}
+}
+
+// ── Interfaz ─────────────────────────────────────────────────────
+(function bfInyectarUI(){
+  const btnStock = document.querySelector('.nav-btn[onclick*="\'inventario\'"]');
+  if(btnStock) btnStock.insertAdjacentHTML('afterend',
+    `<button class="nav-btn" onclick="showPage('bienes',this)"><span class="icon">🧰</span> Inventario de Fábrica<span class="nav-badge" id="badge-bienes" style="display:none">0</span></button>`);
+  const sel = st => `style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px${st||''}"`;
+  const page = `
+  <div class="page" id="page-bienes">
+    <div class="page-hero">
+      <h2>🧰 Inventario de Fábrica</h2>
+      <p>Artículos de limpieza, herramientas, carros, latas, moldes, máquinas y todo lo que hay en la fábrica · cantidad, estado y sector</p>
+    </div>
+    <div class="kpi-grid" id="bf-kpis"></div>
+    <div class="pedidos-rep-tabs" style="margin-bottom:16px">
+      <button class="pedidos-rep-tab active" data-bftab="lista" onclick="bfTab('lista')">📋 Inventario</button>
+      <button class="pedidos-rep-tab" data-bftab="movs" onclick="bfTab('movs')">🔄 Movimientos</button>
+      <button class="pedidos-rep-tab" data-bftab="resumen" onclick="bfTab('resumen')">📊 Resumen</button>
+    </div>
+    <div id="bf-tab-lista">
+      <div class="toolbar">
+        <input class="search-input" id="bf-f-txt" placeholder="Buscar artículo, medida, marca…" oninput="bfRenderLista()">
+        <select id="bf-f-cat" onchange="bfRenderLista()" ${sel()}><option value="">Todas las categorías</option></select>
+        <select id="bf-f-sector" onchange="bfRenderLista()" ${sel()}><option value="">Todos los sectores</option></select>
+        <select id="bf-f-estado" onchange="bfRenderLista()" ${sel()}>
+          <option value="">Todo</option><option value="rep">🛠️ Con unidades a reparar</option><option value="bajo">⚠️ Limpieza bajo mínimo</option>
+          <option value="uso">Solo bienes de uso</option><option value="consumible">Solo consumibles</option></select>
+        <button class="btn-secondary" onclick="bfImprimirPlanilla()">🖨️ Planilla de conteo</button>
+        <button class="btn-secondary" onclick="bfExportarCSV()">📊 CSV</button>
+        <button class="btn-primary" onclick="bfAbrirArticulo()">+ Nuevo artículo</button>
+      </div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Artículo</th><th>Sector</th><th>Cantidad</th><th>Estado</th><th>Valor estimado</th><th></th></tr></thead>
+        <tbody id="bf-tbody"></tbody></table></div></div>
+    </div>
+    <div id="bf-tab-movs" style="display:none">
+      <div class="toolbar">
+        <input type="month" id="bf-m-mes" onchange="bfRenderMovs()" ${sel()}>
+        <input class="search-input" id="bf-m-txt" placeholder="Buscar artículo, usuario o nota…" oninput="bfRenderMovs()">
+        <select id="bf-m-tipo" onchange="bfRenderMovs()" ${sel()}><option value="">Todos los movimientos</option>
+          ${Object.entries(BF_TIPOS_MOV).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+        <button class="btn-secondary" onclick="bfExportarMovsCSV()">📊 CSV</button>
+      </div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Artículo</th><th>Movimiento</th><th>Cantidad</th><th>Queda</th><th>Detalle</th><th>Usuario</th></tr></thead>
+        <tbody id="bf-mtbody"></tbody></table></div></div>
+    </div>
+    <div id="bf-tab-resumen" style="display:none">
+      <div class="toolbar"><input type="month" id="bf-r-mes" onchange="bfRenderResumen()" ${sel()}>
+        <span style="font-size:12px;color:var(--texto-2)">El mes elegido se usa para consumo de limpieza y bajas</span></div>
+      <div id="bf-resumen"></div>
+    </div>
+  </div>`;
+  const main = document.getElementById('page-kardex')?.parentElement || document.querySelector('.page')?.parentElement;
+  if(main) main.insertAdjacentHTML('beforeend', page);
+
+  const modales = `
+  <datalist id="bf-dl-cat">${BF_CATEGORIAS.map(c=>`<option value="${c[0]}">`).join('')}</datalist>
+  <datalist id="bf-dl-sector"></datalist>
+  <div class="modal-overlay" id="bf-modal-art">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header"><span>🧰</span><h2 id="bf-art-titulo">Nuevo artículo</h2>
+        <button class="modal-close" onclick="cerrarModal('bf-modal-art')">✕</button></div>
+      <div class="modal-body"><input type="hidden" id="bf-a-id">
+        <div class="form-grid">
+          <div class="form-group span2"><label>Nombre del artículo *</label>
+            <input type="text" id="bf-a-nombre" placeholder="Ej: Lata enlozada, Carro bandejero 18 bandejas, Lavandina, Espátula"></div>
+          <div class="form-group"><label>Categoría *</label>
+            <input type="text" id="bf-a-cat" list="bf-dl-cat" placeholder="Elegí o escribí una" onchange="bfSugerirTipo()"></div>
+          <div class="form-group"><label>Tipo *</label>
+            <select id="bf-a-tipo" onchange="bfArtTipoUI()"><option value="uso">🔧 Bien de uso (se cuenta y se da de baja)</option>
+              <option value="consumible">🧽 Consumible (se gasta y se repone)</option></select></div>
+          <div class="form-group"><label>Sector / ubicación *</label>
+            <input type="text" id="bf-a-sector" list="bf-dl-sector" placeholder="Ej: Panadería, Depósito"></div>
+          <div class="form-group"><label>Medida / modelo</label>
+            <input type="text" id="bf-a-medida" placeholder="Ej: 60x40, 5 litros, 18 bandejas"></div>
+          <div class="form-group" id="bf-a-cant-wrap"><label>Cantidad actual *</label>
+            <input type="number" id="bf-a-cant" min="0" step="any" placeholder="0"></div>
+          <div class="form-group"><label>Unidad</label>
+            <input type="text" id="bf-a-uom" list="bf-dl-uom" placeholder="unidades">
+            <datalist id="bf-dl-uom"><option value="unidades"><option value="litros"><option value="kg"><option value="bidones"><option value="packs"><option value="cajas"><option value="rollos"><option value="pares"></datalist></div>
+          <div class="form-group" id="bf-a-rep-wrap"><label>De esas, a reparar / dañadas</label>
+            <input type="number" id="bf-a-rep" min="0" step="1" placeholder="0"></div>
+          <div class="form-group" id="bf-a-min-wrap"><label>Stock mínimo (aviso de reposición)</label>
+            <input type="number" id="bf-a-min" min="0" step="any" placeholder="0"></div>
+          <div class="form-group"><label>Valor unitario estimado ($)</label>
+            <input type="number" id="bf-a-valor" min="0" step="any" placeholder="Opcional"></div>
+          <div class="form-group"><label>Marca / proveedor</label><input type="text" id="bf-a-marca" placeholder="Opcional"></div>
+          <div class="form-group span2"><label>Notas</label><textarea id="bf-a-nota" placeholder="N° de serie, estado, observaciones…"></textarea></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="bf-a-borrar" style="margin-right:auto;color:var(--alerta)" onclick="bfEliminarArticulo()">🗑️ Eliminar</button>
+        <button class="btn-secondary" onclick="cerrarModal('bf-modal-art')">Cancelar</button>
+        <button class="btn-secondary" id="bf-a-otro" onclick="bfGuardarArticulo(true)">Guardar y cargar otro</button>
+        <button class="btn-primary" onclick="bfGuardarArticulo(false)">Guardar</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="bf-modal-mov">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header"><span>🔄</span><h2 id="bf-mv-titulo">Movimiento</h2>
+        <button class="modal-close" onclick="cerrarModal('bf-modal-mov')">✕</button></div>
+      <div class="modal-body"><input type="hidden" id="bf-mv-id">
+        <div id="bf-mv-info" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.7;margin-bottom:14px"></div>
+        <div class="form-grid">
+          <div class="form-group span2"><label>¿Qué pasó? *</label><select id="bf-mv-tipo" onchange="bfMovUI()"></select></div>
+          <div class="form-group"><label id="bf-mv-cant-label">Cantidad *</label><input type="number" id="bf-mv-cant" min="0" step="any" oninput="bfMovUI(true)"></div>
+          <div class="form-group"><label>Fecha</label><input type="date" id="bf-mv-fecha"></div>
+          <div class="form-group" id="bf-mv-rep-wrap"><label>De las contadas, a reparar / dañadas</label><input type="number" id="bf-mv-rep" min="0" step="1" oninput="bfMovUI(true)"></div>
+          <div class="form-group" id="bf-mv-mot-wrap"><label>Motivo de la baja *</label>
+            <select id="bf-mv-mot">${Object.entries(BF_MOTIVOS_BAJA).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+          <div class="form-group" id="bf-mv-hacia-wrap"><label>Sector de destino *</label><input type="text" id="bf-mv-hacia" list="bf-dl-sector"></div>
+          <div class="form-group" id="bf-mv-vu-wrap"><label>Precio unitario pagado ($)</label><input type="number" id="bf-mv-vu" min="0" step="any" placeholder="Opcional: actualiza el valor"></div>
+          <div class="form-group span2"><label>Nota</label><textarea id="bf-mv-nota" placeholder="Detalle, a quién se entregó, dónde se reparó…"></textarea></div>
+          <div class="form-group span2" id="bf-mv-preview" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="cerrarModal('bf-modal-mov')">Cancelar</button>
+        <button class="btn-primary" onclick="bfGuardarMov()">Registrar</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', modales);
+  ['bf-modal-art','bf-modal-mov'].forEach(id=>{
+    const o = document.getElementById(id);
+    if(o) o.addEventListener('click', e=>{ if(e.target===o) o.classList.remove('open'); });
+  });
+})();
+
+(function(){
+  const orig = showPage;
+  window.showPage = function(id){
+    const r = orig.apply(this, arguments);
+    const pg = document.getElementById('page-bienes');
+    if(id==='bienes' && pg && pg.classList.contains('active')) bfRender();
+    return r;
+  };
+})();
+
+let bfTabActiva = 'lista';
+function bfTab(t){
+  bfTabActiva = t;
+  ['lista','movs','resumen'].forEach(x=>{ const el=document.getElementById('bf-tab-'+x); if(el) el.style.display = x===t?'':'none'; });
+  document.querySelectorAll('#page-bienes .pedidos-rep-tab').forEach(b=>b.classList.toggle('active', b.dataset.bftab===t));
+  bfRender();
+}
+function bfSectores(){ return [...new Set([...BF_SECTORES, ...(DB.bienes||[]).map(b=>b.sector).filter(Boolean)])]; }
+function bfCategorias(){ return [...new Set([...BF_CATEGORIAS.map(c=>c[0]), ...(DB.bienes||[]).map(b=>b.cat).filter(Boolean)])]; }
+function bfLlenarFiltros(){
+  const fill = (id, arr, todos)=>{ const el=document.getElementById(id); if(!el) return; const v=el.value;
+    el.innerHTML = `<option value="">${todos}</option>` + arr.map(x=>`<option value="${kxEsc(x)}">${kxEsc(x)}</option>`).join(''); el.value = v; };
+  const catsUsadas = bfCategorias().filter(c=>(DB.bienes||[]).some(b=>b.cat===c));
+  fill('bf-f-cat', catsUsadas.map(c=>c), 'Todas las categorías');
+  fill('bf-f-sector', bfSectores().filter(s=>(DB.bienes||[]).some(b=>b.sector===s)), 'Todos los sectores');
+  const dl = document.getElementById('bf-dl-sector');
+  if(dl) dl.innerHTML = bfSectores().map(s=>`<option value="${kxEsc(s)}">`).join('');
+}
+function bfRender(){
+  ['bf-m-mes','bf-r-mes'].forEach(id=>{ const el=document.getElementById(id); if(el && !el.value) el.value = kxMesActual(); });
+  bfLlenarFiltros(); bfRenderKpis();
+  if(bfTabActiva==='lista') bfRenderLista();
+  if(bfTabActiva==='movs') bfRenderMovs();
+  if(bfTabActiva==='resumen') bfRenderResumen();
+}
+function bfActualizarBadge(){
+  const n = (DB.bienes||[]).filter(bfBajoMinimo).length;
+  const b = document.getElementById('badge-bienes');
+  if(b){ b.textContent = n; b.style.display = n ? '' : 'none'; b.title = n ? `${n} artículo(s) de limpieza bajo mínimo` : ''; }
+}
+function bfRenderKpis(){
+  const L = DB.bienes||[];
+  const uso = L.filter(b=>b.tipo!=='consumible');
+  const unidades = uso.reduce((s,b)=>s+(Number(b.cant)||0),0);
+  const rep = uso.reduce((s,b)=>s+(Number(b.rep)||0),0);
+  const bajo = L.filter(bfBajoMinimo).length;
+  const valor = L.reduce((s,b)=>s+bfValor(b),0);
+  const el = document.getElementById('bf-kpis');
+  if(el) el.innerHTML = `
+    <div class="kpi-card gold"><div class="kpi-label">Artículos registrados</div><div class="kpi-value">${fmtN(L.length)}</div><div class="kpi-sub">${fmtN(uso.length)} bienes de uso · ${fmtN(L.length-uso.length)} consumibles</div></div>
+    <div class="kpi-card"><div class="kpi-label">Unidades de bienes de uso</div><div class="kpi-value">${fmtN(unidades)}</div><div class="kpi-sub">herramientas, carros, latas, moldes…</div></div>
+    <div class="kpi-card ${rep?'warn':'ok'}"><div class="kpi-label">A reparar / dañadas</div><div class="kpi-value">${fmtN(rep)}</div><div class="kpi-sub">unidades fuera de servicio</div></div>
+    <div class="kpi-card ${bajo?'warn':'ok'}"><div class="kpi-label">Limpieza a reponer</div><div class="kpi-value">${fmtN(bajo)}</div><div class="kpi-sub">consumibles bajo mínimo</div></div>
+    <div class="kpi-card ok"><div class="kpi-label">Valor estimado</div><div class="kpi-value">${fmt$(valor)}</div><div class="kpi-sub">de los artículos con valor cargado</div></div>`;
+  bfActualizarBadge();
+  setTimeout(()=>{ try{ ajustarTamKpis(); }catch(_){} }, 0);
+}
+function bfFiltrados(){
+  const t = kxVal('bf-f-txt').trim().toLowerCase(), cat = kxVal('bf-f-cat'), sec = kxVal('bf-f-sector'), est = kxVal('bf-f-estado');
+  return (DB.bienes||[]).filter(b=>{
+    if(cat && b.cat!==cat) return false;
+    if(sec && b.sector!==sec) return false;
+    if(est==='rep' && !(Number(b.rep)>0)) return false;
+    if(est==='bajo' && !bfBajoMinimo(b)) return false;
+    if((est==='uso'||est==='consumible') && (b.tipo||'uso')!==est) return false;
+    if(t && !`${b.nombre} ${b.medida} ${b.marca} ${b.cat} ${b.sector} ${b.nota} ${b.id}`.toLowerCase().includes(t)) return false;
+    return true;
+  });
+}
+function bfRenderLista(){
+  const tb = document.getElementById('bf-tbody'); if(!tb) return;
+  const L = bfFiltrados();
+  if(!L.length){
+    tb.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="es-icon">🧰</div>
+      <h4>${(DB.bienes||[]).length?'Nada coincide con el filtro':'Todavía no hay artículos cargados'}</h4>
+      <p>${(DB.bienes||[]).length?'Probá con otro filtro.':'Tocá <strong>+ Nuevo artículo</strong>. Con "Guardar y cargar otro" podés recorrer un sector y cargar todo seguido.'}</p></div></td></tr>`;
+    return;
+  }
+  const grupos = {};
+  L.forEach(b=>(grupos[b.cat||'Otros'] = grupos[b.cat||'Otros'] || []).push(b));
+  const orden = bfCategorias();
+  tb.innerHTML = Object.keys(grupos).sort((a,b)=>(orden.indexOf(a)+1||99)-(orden.indexOf(b)+1||99)).map(cat=>{
+    const it = grupos[cat].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'') || (a.sector||'').localeCompare(b.sector||''));
+    const tot = it.reduce((s,b)=>s+(Number(b.cant)||0),0);
+    return `<tr class="bf-cat-row"><td colspan="6">${bfIcono(cat)} ${kxEsc(cat)} · ${it.length} artículo(s)${it.every(b=>b.tipo!=='consumible') ? ` · ${fmtN(tot)} unidades` : ''}</td></tr>` +
+      it.map(b=>{
+        const rep = Number(b.rep)||0, cant = Number(b.cant)||0;
+        const estado = b.tipo==='consumible'
+          ? (bfBajoMinimo(b) ? `<span class="bf-bajo">⚠️ Reponer (mín. ${fmtN(b.min)})</span>` : Number(b.min)>0 ? `<span style="font-size:11px;color:var(--vapor-dk)">OK · mín. ${fmtN(b.min)}</span>` : '<span style="font-size:11px;color:var(--texto-2)">—</span>')
+          : (rep ? `<span style="font-size:11px">${fmtN(cant-rep)} en uso</span><span class="bf-rep">🛠️ ${fmtN(rep)} a reparar</span>` : `<span style="font-size:11px;color:var(--vapor-dk)">✅ Todas en uso</span>`);
+        return `<tr class="bf-item" onclick="bfAbrirMov('${kxEsc(b.id)}')" title="Tocá para registrar un movimiento">
+          <td><strong>${kxEsc(b.nombre)}</strong>${b.medida?` <span style="color:var(--texto-2)">· ${kxEsc(b.medida)}</span>`:''}
+            <br><span class="bf-tipo">${b.tipo==='consumible'?'🧽 Consumible':'🔧 Bien de uso'}${b.marca?' · '+kxEsc(b.marca):''} · ${kxEsc(b.id)}</span></td>
+          <td>${kxEsc(b.sector||'—')}</td>
+          <td><strong style="font-size:15px">${fmtN(cant)}</strong> <span style="font-size:11px;color:var(--texto-2)">${kxEsc(b.uom||'unidades')}</span></td>
+          <td>${estado}</td>
+          <td>${Number(b.valor)>0 ? fmt$(bfValor(b)) : '<span style="color:var(--texto-2)">—</span>'}</td>
+          <td onclick="event.stopPropagation()"><div class="bf-acc">
+            <button class="btn-secondary" onclick="bfAbrirMov('${kxEsc(b.id)}')" title="Registrar movimiento">🔄</button>
+            <button class="btn-secondary" onclick="bfAbrirArticulo('${kxEsc(b.id)}')" title="Editar datos">✏️</button></div></td></tr>`;
+      }).join('');
+  }).join('');
+}
+
+// ── Alta / edición de artículo ───────────────────────────────────
+function bfSugerirTipo(){ if(!kxVal('bf-a-id')){ document.getElementById('bf-a-tipo').value = bfTipoDeCat(kxVal('bf-a-cat')); bfArtTipoUI(); } }
+function bfArtTipoUI(){
+  const cons = kxVal('bf-a-tipo')==='consumible', nuevo = !kxVal('bf-a-id');
+  document.getElementById('bf-a-rep-wrap').style.display = (!cons && nuevo) ? '' : 'none';
+  document.getElementById('bf-a-min-wrap').style.display = cons ? '' : 'none';
+  document.getElementById('bf-a-cant-wrap').style.display = nuevo ? '' : 'none';
+  const u = document.getElementById('bf-a-uom'); if(!u.value) u.placeholder = cons ? 'litros, bidones, packs…' : 'unidades';
+}
+function bfAbrirArticulo(id, base){
+  bfLlenarFiltros();
+  const b = id ? bfGet(id) : null, src = b || base || {};
+  const set = (k,v)=>{ document.getElementById(k).value = v==null ? '' : v; };
+  set('bf-a-id', b ? b.id : '');
+  set('bf-a-nombre', b ? b.nombre : ''); set('bf-a-cat', src.cat || kxVal('bf-f-cat') || '');
+  set('bf-a-tipo', src.tipo || bfTipoDeCat(src.cat || kxVal('bf-f-cat')));
+  set('bf-a-sector', src.sector || kxVal('bf-f-sector') || ''); set('bf-a-medida', b ? b.medida : '');
+  set('bf-a-cant',''); set('bf-a-rep',''); set('bf-a-uom', b ? b.uom : (src.uom||''));
+  set('bf-a-min', b ? b.min : ''); set('bf-a-valor', b ? b.valor : ''); set('bf-a-marca', b ? b.marca : ''); set('bf-a-nota', b ? b.nota : '');
+  document.getElementById('bf-art-titulo').textContent = b ? `Editar: ${b.nombre}` : 'Nuevo artículo';
+  document.getElementById('bf-a-borrar').style.display = (b && kxEsAdmin()) ? '' : 'none';
+  document.getElementById('bf-a-otro').style.display = b ? 'none' : '';
+  bfArtTipoUI();
+  abrirModal('bf-modal-art');
+  setTimeout(()=>document.getElementById('bf-a-nombre').focus(), 80);
+}
+function bfGuardarArticulo(otro){
+  const id = kxVal('bf-a-id');
+  const d = {
+    nombre: kxVal('bf-a-nombre').trim(), cat: kxVal('bf-a-cat').trim(), tipo: kxVal('bf-a-tipo'),
+    sector: kxVal('bf-a-sector').trim(), medida: kxVal('bf-a-medida').trim(), uom: kxVal('bf-a-uom').trim() || 'unidades',
+    min: bfNum(kxVal('bf-a-min')), valor: +(Number(kxVal('bf-a-valor'))||0).toFixed(2), marca: kxVal('bf-a-marca').trim(), nota: kxVal('bf-a-nota').trim()
+  };
+  if(!d.nombre || !d.cat || !d.sector){ toast('⚠️ Completá nombre, categoría y sector','error'); return; }
+  if(id){
+    const b = bfGet(id); if(!b) return;
+    const cambios = [];
+    if(b.sector !== d.sector) cambios.push(`sector ${b.sector} → ${d.sector}`);
+    if(b.nombre !== d.nombre) cambios.push(`nombre "${b.nombre}" → "${d.nombre}"`);
+    Object.assign(b, d);
+    if(b.tipo==='consumible') b.rep = 0;
+    bfTocar(b);
+    registrarAuditoria('Modificación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Datos editados${cambios.length?': '+cambios.join(', '):''}`);
+    toast('✅ Artículo actualizado','success');
+    cerrarModal('bf-modal-art');
+  } else {
+    const cant = bfNum(kxVal('bf-a-cant'));
+    const rep  = d.tipo==='consumible' ? 0 : Math.min(cant, Math.max(0, Math.round(Number(kxVal('bf-a-rep'))||0)));
+    if(kxVal('bf-a-cant')==='' || cant < 0){ toast('⚠️ Ingresá la cantidad actual (puede ser 0)','error'); return; }
+    const dup = (DB.bienes||[]).find(b=>b.nombre.trim().toLowerCase()===d.nombre.toLowerCase() && (b.sector||'').toLowerCase()===d.sector.toLowerCase() && (b.medida||'').toLowerCase()===d.medida.toLowerCase());
+    if(dup && !confirm(`Ya existe "${dup.nombre}${dup.medida?' '+dup.medida:''}" en ${dup.sector} con ${fmtN(dup.cant)} ${dup.uom}.\n\nSi llegaron más, conviene registrar un ingreso en ese artículo.\n¿Crear otro artículo igual de todos modos?`)) return;
+    const b = { id: bfNuevoId(), ...d, cant, rep, alta: kxHoy(), _ts: Date.now() };
+    DB.bienes.push(b);
+    try{ encolarCambio('bienes','upsert',{id:b.id}); }catch(_){}
+    bfRegistrarMov(b, { tipo:'alta', d:cant, nota: rep ? `${rep} a reparar` : '' });
+    registrarAuditoria('Creación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Alta: ${fmtN(cant)} ${b.uom} en ${b.sector} (${b.cat})`);
+    toast(`✅ ${b.nombre} cargado · ${fmtN(cant)} ${b.uom} en ${b.sector}`,'success');
+    if(otro){
+      bfAbrirArticulo(null, { cat:d.cat, tipo:d.tipo, sector:d.sector, uom:d.uom });
+    } else cerrarModal('bf-modal-art');
+  }
+  bfRender();
+}
+function bfEliminarArticulo(){
+  if(!kxEsAdmin()){ toast('🔒 Solo Dueño o Administrador pueden eliminar artículos','error'); return; }
+  const b = bfGet(kxVal('bf-a-id')); if(!b) return;
+  if(!confirm(`¿Eliminar "${b.nombre}" (${b.sector}) del inventario?\n\nSi se rompió o se perdió, es mejor registrar una BAJA: así queda en el historial y en el resumen.\nEliminar es solo para artículos cargados por error.`)) return;
+  const motivo = prompt('Motivo de la eliminación (queda en Auditoría):'); if(!motivo) return;
+  DB.bienes = DB.bienes.filter(x=>x.id!==b.id);
+  try{ encolarCambio('bienes','delete',{id:b.id}); }catch(_){}
+  registrarAuditoria('Eliminación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Eliminado (${fmtN(b.cant)} ${b.uom} en ${b.sector}). Motivo: ${motivo}`);
+  cerrarModal('bf-modal-art'); toast('🗑️ Artículo eliminado','success'); bfRender();
+}
+
+// ── Movimientos ──────────────────────────────────────────────────
+function bfAbrirMov(id, tipoPre){
+  const b = bfGet(id); if(!b) return;
+  bfLlenarFiltros();
+  const cons = b.tipo==='consumible';
+  const tipos = cons ? ['consumo','ingreso','conteo','baja','traslado'] : ['baja','ingreso','conteo','reparar','reparado','traslado'];
+  document.getElementById('bf-mv-tipo').innerHTML = tipos.map(t=>`<option value="${t}">${BF_TIPOS_MOV[t]}</option>`).join('');
+  document.getElementById('bf-mv-tipo').value = tipoPre && tipos.includes(tipoPre) ? tipoPre : tipos[0];
+  document.getElementById('bf-mv-id').value = b.id;
+  document.getElementById('bf-mv-titulo').textContent = `${bfIcono(b.cat)} ${b.nombre}${b.medida?' · '+b.medida:''}`;
+  document.getElementById('bf-mv-info').innerHTML = `Sector: <strong>${kxEsc(b.sector)}</strong> · Hay: <strong>${fmtN(b.cant)} ${kxEsc(b.uom)}</strong>
+    ${cons ? (Number(b.min)>0?` · Mínimo: ${fmtN(b.min)}`:'') : ` · En uso: <strong>${fmtN((b.cant||0)-(b.rep||0))}</strong> · A reparar: <strong>${fmtN(b.rep||0)}</strong>`}
+    <br><a href="#" onclick="event.preventDefault();cerrarModal('bf-modal-mov');bfAbrirArticulo('${kxEsc(b.id)}')" style="color:var(--trigo-dk);font-size:11px">✏️ Editar datos del artículo</a>`;
+  ['bf-mv-cant','bf-mv-rep','bf-mv-hacia','bf-mv-vu','bf-mv-nota'].forEach(x=>document.getElementById(x).value='');
+  document.getElementById('bf-mv-fecha').value = kxHoy();
+  bfMovUI();
+  abrirModal('bf-modal-mov');
+  setTimeout(()=>document.getElementById('bf-mv-cant').focus(), 80);
+}
+function bfCalcMov(b, tipo, cant, repCont){
+  const c0 = Number(b.cant)||0, r0 = Number(b.rep)||0;
+  let c = c0, r = r0, d = 0, err = '';
+  if(tipo==='ingreso'){ d = cant; c = c0 + cant; }
+  else if(tipo==='consumo' || tipo==='baja'){ if(cant > c0) err = `Solo hay ${fmtN(c0)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
+  else if(tipo==='conteo'){ c = cant; d = +(cant - c0).toFixed(3); r = b.tipo==='consumible' ? 0 : Math.min(c, Math.max(0, Math.round(repCont==null||isNaN(repCont) ? r0 : repCont))); }
+  else if(tipo==='reparar'){ if(cant > c0 - r0) err = `Solo hay ${fmtN(c0-r0)} en uso.`; d = Math.min(cant, c0-r0); r = r0 + d; }
+  else if(tipo==='reparado'){ if(cant > r0) err = `Solo hay ${fmtN(r0)} a reparar.`; d = Math.min(cant, r0); r = r0 - d; }
+  else if(tipo==='traslado'){ if(cant > c0) err = `Solo hay ${fmtN(c0)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
+  return { c:bfNum(c), r:bfNum(r), d:bfNum(d), err };
+}
+function bfMovUI(soloPreview){
+  const b = bfGet(kxVal('bf-mv-id')); if(!b) return;
+  const tipo = kxVal('bf-mv-tipo');
+  if(!soloPreview){
+    const show = (id,v)=>document.getElementById(id).style.display = v ? '' : 'none';
+    show('bf-mv-rep-wrap', tipo==='conteo' && b.tipo!=='consumible');
+    show('bf-mv-mot-wrap', tipo==='baja');
+    show('bf-mv-hacia-wrap', tipo==='traslado');
+    show('bf-mv-vu-wrap', tipo==='ingreso');
+    document.getElementById('bf-mv-cant-label').textContent =
+      tipo==='conteo' ? 'Cantidad contada (total) *' : tipo==='traslado' ? 'Cantidad a trasladar *' : 'Cantidad *';
+    if(tipo==='conteo') document.getElementById('bf-mv-rep').placeholder = String(b.rep||0);
+  }
+  const cant = parseFloat(kxVal('bf-mv-cant'));
+  const prev = document.getElementById('bf-mv-preview');
+  if(isNaN(cant)){ prev.innerHTML = 'Ingresá la cantidad para ver cómo queda.'; return; }
+  const repTxt = kxVal('bf-mv-rep');
+  const x = bfCalcMov(b, tipo, cant, repTxt==='' ? null : parseFloat(repTxt));
+  prev.innerHTML = (x.err ? `<span style="color:var(--alerta);font-weight:700">⚠️ ${x.err}</span><br>` : '') +
+    `Queda: <strong>${fmtN(x.c)} ${kxEsc(b.uom)}</strong>${b.tipo!=='consumible' ? ` · en uso ${fmtN(x.c-x.r)} · a reparar ${fmtN(x.r)}` : ''}` +
+    (tipo==='conteo' ? `<br>${x.d===0?'✅ Coincide con lo registrado.':x.d<0?`⚠️ Faltan ${fmtN(-x.d)} respecto a lo registrado.`:`ℹ️ Aparecieron ${fmtN(x.d)} más de lo registrado.`}` : '') +
+    (b.tipo==='consumible' && Number(b.min)>0 && x.c<=b.min ? `<br><span style="color:var(--alerta)">⚠️ Queda en el mínimo o por debajo: hay que reponer.</span>` : '');
+}
+function bfGuardarMov(){
+  const b = bfGet(kxVal('bf-mv-id')); if(!b) return;
+  const tipo = kxVal('bf-mv-tipo'), cant = parseFloat(kxVal('bf-mv-cant'));
+  const fecha = kxVal('bf-mv-fecha') || kxHoy(), nota = kxVal('bf-mv-nota').trim();
+  if(isNaN(cant) || cant < 0 || (tipo!=='conteo' && cant===0)){ toast('⚠️ Ingresá una cantidad válida','error'); return; }
+  if(fecha > kxHoy()){ toast('⚠️ La fecha no puede ser futura','error'); return; }
+  const repTxt = kxVal('bf-mv-rep');
+  const x = bfCalcMov(b, tipo, cant, repTxt==='' ? null : parseFloat(repTxt));
+  if(x.err){ toast('⚠️ '+x.err,'error'); return; }
+  let hacia = '';
+  if(tipo==='traslado'){
+    hacia = kxVal('bf-mv-hacia').trim();
+    if(!hacia){ toast('⚠️ Elegí el sector de destino','error'); return; }
+    if(hacia.toLowerCase()===(b.sector||'').toLowerCase()){ toast('⚠️ El destino es el mismo sector','error'); return; }
+  }
+  const antes = Number(b.cant)||0, repAntes = Number(b.rep)||0;
+  const repTrasl = tipo==='traslado' ? Math.max(0, repAntes - x.r) : 0;
+  b.cant = x.c; b.rep = x.r;
+  const vu = parseFloat(kxVal('bf-mv-vu'));
+  if(tipo==='ingreso' && vu > 0) b.valor = +vu.toFixed(2);
+  bfTocar(b);
+  bfRegistrarMov(b, { tipo, fecha, d: (tipo==='reparar'||tipo==='reparado') ? x.d : x.d, mot: tipo==='baja' ? kxVal('bf-mv-mot') : '', hacia, vu: tipo==='ingreso'?vu:0,
+    nota: tipo==='conteo' ? `Contado: ${fmtN(cant)} · registrado: ${fmtN(antes)}${b.tipo!=='consumible'?` · a reparar ${fmtN(x.r)}`:''}${nota?' · '+nota:''}` : nota });
+  if(tipo==='traslado'){
+    const mover = -x.d;
+    let dest = (DB.bienes||[]).find(o=>o.id!==b.id && o.nombre.trim().toLowerCase()===b.nombre.trim().toLowerCase() &&
+      (o.medida||'').toLowerCase()===(b.medida||'').toLowerCase() && (o.sector||'').toLowerCase()===hacia.toLowerCase());
+    if(!dest){
+      dest = { ...JSON.parse(JSON.stringify(b)), id: bfNuevoId(), sector: hacia, cant: 0, rep: 0, alta: fecha };
+      DB.bienes.push(dest);
+    }
+    dest.cant = bfNum((Number(dest.cant)||0) + mover);
+    dest.rep  = bfNum(Math.min(dest.cant, (Number(dest.rep)||0) + repTrasl));
+    bfTocar(dest);
+    bfRegistrarMov(dest, { tipo:'traslado', fecha, d: mover, hacia: dest.sector, nota: `Viene de ${b.sector}${nota?' · '+nota:''}` });
+  }
+  const txt = `${BF_TIPOS_MOV[tipo]}: ${x.d>0?'+':''}${fmtN(x.d)} ${b.uom}${tipo==='baja'?' ('+(BF_MOTIVOS_BAJA[kxVal('bf-mv-mot')]||'')+')':''}${hacia?' → '+hacia:''} · Quedan ${fmtN(b.cant)}${b.tipo!=='consumible'?` (a reparar ${fmtN(b.rep)})`:''}`;
+  registrarAuditoria('Modificación', `Inventario fábrica ${b.id} — ${b.nombre} (${b.sector})`, txt + (nota?' · '+nota:''));
+  cerrarModal('bf-modal-mov');
+  toast(`✅ ${b.nombre}: ${txt}`,'success');
+  bfRender();
+}
+
+function bfMovsFiltrados(){
+  const mes = kxVal('bf-m-mes'), t = kxVal('bf-m-txt').trim().toLowerCase(), tipo = kxVal('bf-m-tipo');
+  return (DB.bienesMovimientos||[]).filter(m=>{
+    if(mes && (m.f||'').slice(0,7)!==mes) return false;
+    if(tipo && m.tipo!==tipo) return false;
+    if(t && !`${m.nb} ${m.sector} ${m.u} ${m.nota} ${m.hacia}`.toLowerCase().includes(t)) return false;
+    return true;
+  }).sort((a,b)=>(b.f||'').localeCompare(a.f||'') || (b._ts||0)-(a._ts||0));
+}
+function bfRenderMovs(){
+  const tb = document.getElementById('bf-mtbody'); if(!tb) return;
+  const L = bfMovsFiltrados();
+  tb.innerHTML = L.length ? L.slice(0,300).map(m=>{
+    const b = bfGet(m.bien);
+    const det = [m.tipo==='baja' ? (BF_MOTIVOS_BAJA[m.mot]||m.mot) : '', m.tipo==='traslado' && m.d<0 ? '→ '+m.hacia : '', m.vu>0 ? fmt$(m.vu)+' c/u' : '', m.nota].filter(Boolean).join(' · ');
+    return `<tr><td>${kxFechaFmt(m.f)}</td><td><strong>${kxEsc(m.nb)}</strong><br><span class="bf-tipo">${kxEsc(m.sector||'')}</span></td>
+      <td>${BF_TIPOS_MOV[m.tipo]||m.tipo}</td>
+      <td class="${m.d<0?'kx-neg':m.d>0?'kx-pos':''}">${m.tipo==='reparar'||m.tipo==='reparado'?fmtN(m.d):(m.d>0?'+':'')+fmtN(m.d)} ${kxEsc(b?b.uom:'')}</td>
+      <td>${fmtN(m.res)}</td><td style="font-size:11px;max-width:280px">${kxEsc(det)||'—'}</td><td style="font-size:11px">${kxEsc(m.u)}</td></tr>`;
+  }).join('') + (L.length>300?`<tr><td colspan="7" style="text-align:center;font-size:11px;color:var(--texto-2)">Mostrando 300 de ${L.length}. Usá el CSV para ver todo.</td></tr>`:'')
+  : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--texto-2)">Sin movimientos en este período</td></tr>';
+}
+
+// ── Resumen ──────────────────────────────────────────────────────
+function bfRenderResumen(){
+  const cont = document.getElementById('bf-resumen'); if(!cont) return;
+  const mes = kxVal('bf-r-mes') || kxMesActual();
+  const L = DB.bienes||[];
+  if(!L.length){ cont.innerHTML = '<div class="card"><div class="empty-state"><div class="es-icon">📊</div><h4>Sin artículos cargados</h4></div></div>'; return; }
+  const porCat = {};
+  L.forEach(b=>{ const c = porCat[b.cat] || (porCat[b.cat] = {art:0, u:0, rep:0, val:0, cons:b.tipo==='consumible'}); c.art++; c.u += Number(b.cant)||0; c.rep += Number(b.rep)||0; c.val += bfValor(b); if(b.tipo!=='consumible') c.cons=false; });
+  const sectores = [...new Set(L.map(b=>b.sector))].sort();
+  const catsUso = Object.keys(porCat).filter(c=>!porCat[c].cons);
+  const movsMes = (DB.bienesMovimientos||[]).filter(m=>(m.f||'').slice(0,7)===mes);
+  const valorDe = m=>{ const b = bfGet(m.bien); return Math.abs(m.d) * (Number(b && b.valor)||0); };
+  const bajas = movsMes.filter(m=>m.tipo==='baja' || (m.tipo==='conteo' && m.d<0 && (bfGet(m.bien)||{}).tipo!=='consumible'));
+  const consumos = {};
+  movsMes.filter(m=>m.tipo==='consumo' || (m.tipo==='conteo' && m.d<0 && (bfGet(m.bien)||{}).tipo==='consumible')).forEach(m=>{
+    const k = m.nb + '|' + ((bfGet(m.bien)||{}).uom||'');
+    const r = consumos[k] || (consumos[k] = { nb:m.nb, uom:(bfGet(m.bien)||{}).uom||'', q:0, v:0 });
+    r.q += Math.abs(m.d); r.v += valorDe(m);
+  });
+  const motivos = {};
+  bajas.forEach(m=>{ const k = m.tipo==='conteo' ? 'faltante' : (m.mot||'otro'); const r = motivos[k] || (motivos[k]={q:0,v:0}); r.q += Math.abs(m.d); r.v += valorDe(m); });
+  cont.innerHTML = `
+    <div class="card"><div class="card-header"><h3>📦 Por categoría</h3></div><div class="table-wrap"><table>
+      <thead><tr><th>Categoría</th><th>Artículos</th><th>Cantidad total</th><th>A reparar</th><th>Valor estimado</th></tr></thead>
+      <tbody>${Object.entries(porCat).sort((a,b)=>b[1].val-a[1].val || b[1].u-a[1].u).map(([c,r])=>`<tr><td>${bfIcono(c)} <strong>${kxEsc(c)}</strong></td><td>${r.art}</td>
+        <td>${r.cons?'<span style="color:var(--texto-2);font-size:11px">varias unidades</span>':fmtN(r.u)}</td><td class="${r.rep?'kx-neg':''}">${r.rep?fmtN(r.rep):'—'}</td><td>${r.val?fmt$(r.val):'—'}</td></tr>`).join('')}</tbody></table></div></div>
+    ${catsUso.length && sectores.length ? `<div class="card"><div class="card-header"><h3>🏭 Bienes de uso por sector (unidades)</h3></div><div class="table-wrap"><table>
+      <thead><tr><th>Categoría</th>${sectores.map(s=>`<th style="text-align:right">${kxEsc(s)}</th>`).join('')}<th style="text-align:right">Total</th></tr></thead>
+      <tbody>${catsUso.map(c=>{ let tot=0; return `<tr><td>${bfIcono(c)} ${kxEsc(c)}</td>${sectores.map(s=>{ const q = L.filter(b=>b.cat===c && b.sector===s).reduce((x,b)=>x+(Number(b.cant)||0),0); tot+=q; return `<td style="text-align:right">${q?fmtN(q):'·'}</td>`; }).join('')}<td style="text-align:right"><strong>${fmtN(tot)}</strong></td></tr>`; }).join('')}</tbody></table></div></div>` : ''}
+    <div class="dash-grid">
+      <div class="card"><div class="card-header"><h3>🧽 Consumo de limpieza — ${kxMesNombre(mes)}</h3></div><div class="table-wrap"><table>
+        <thead><tr><th>Artículo</th><th>Cantidad</th><th>Valor</th></tr></thead>
+        <tbody>${Object.values(consumos).length ? Object.values(consumos).sort((a,b)=>b.v-a.v || b.q-a.q).map(r=>`<tr><td>${kxEsc(r.nb)}</td><td>${fmtN(r.q)} ${kxEsc(r.uom)}</td><td>${r.v?fmt$(r.v):'—'}</td></tr>`).join('')
+          + `<tr style="font-weight:700;background:var(--miga-dk)"><td colspan="2">Total</td><td>${fmt$(Object.values(consumos).reduce((s,r)=>s+r.v,0))}</td></tr>`
+          : '<tr><td colspan="3" style="text-align:center;color:var(--texto-2);padding:14px">Sin consumos registrados</td></tr>'}</tbody></table></div></div>
+      <div class="card"><div class="card-header"><h3>🗑️ Bajas y faltantes — ${kxMesNombre(mes)}</h3></div><div class="table-wrap"><table>
+        <thead><tr><th>Motivo</th><th>Unidades</th><th>Valor</th></tr></thead>
+        <tbody>${Object.keys(motivos).length ? Object.entries(motivos).sort((a,b)=>b[1].v-a[1].v || b[1].q-a[1].q).map(([k,r])=>`<tr><td>${k==='faltante'?'🔢 Faltante en conteo':(BF_MOTIVOS_BAJA[k]||k)}</td><td>${fmtN(r.q)}</td><td class="kx-neg">${r.v?fmt$(r.v):'—'}</td></tr>`).join('')
+          : '<tr><td colspan="3" style="text-align:center;color:var(--texto-2);padding:14px">Sin bajas este mes ✅</td></tr>'}</tbody></table></div>
+        ${bajas.length?`<div style="padding:8px 14px;font-size:11px;color:var(--texto-2)">${bajas.slice(0,8).map(m=>`${kxFechaFmt(m.f)} · ${kxEsc(m.nb)} (${kxEsc(m.sector)}): ${fmtN(Math.abs(m.d))}`).join('<br>')}</div>`:''}</div>
+    </div>`;
+}
+
+// ── Exportar / imprimir ──────────────────────────────────────────
+function bfExportarCSV(){
+  const filas = [['Código','Artículo','Medida/modelo','Categoría','Tipo','Sector','Cantidad','Unidad','A reparar','En uso','Mínimo','Valor unitario','Valor total','Marca/proveedor','Alta','Notas']];
+  bfFiltrados().sort((a,b)=>(a.cat||'').localeCompare(b.cat||'') || (a.nombre||'').localeCompare(b.nombre||''))
+    .forEach(b=>filas.push([b.id,b.nombre,b.medida,b.cat,b.tipo==='consumible'?'Consumible':'Bien de uso',b.sector,b.cant,b.uom,b.rep||0,(b.cant||0)-(b.rep||0),b.min||'',b.valor||'',+bfValor(b).toFixed(2),b.marca,b.alta,b.nota]));
+  descargarCSV(filas, `Inventario_Fabrica_${kxHoy()}.csv`);
+  toast('📊 Inventario exportado · Abrilo con Excel','success');
+}
+function bfExportarMovsCSV(){
+  const filas = [['Fecha','Código','Artículo','Sector','Movimiento','Cantidad','Queda','A reparar','Motivo','Destino','Precio unit.','Nota','Usuario']];
+  bfMovsFiltrados().forEach(m=>filas.push([m.f,m.bien,m.nb,m.sector,(BF_TIPOS_MOV[m.tipo]||m.tipo).replace(/^\S+\s/,''),m.d,m.res,m.rep,(BF_MOTIVOS_BAJA[m.mot]||'').replace(/^\S+\s/,''),m.hacia,m.vu||'',m.nota,m.u]));
+  descargarCSV(filas, `Inventario_Fabrica_movimientos_${kxVal('bf-m-mes')||'todo'}.csv`);
+  toast('📊 Movimientos exportados','success');
+}
+// Hoja para recorrer la fábrica y anotar lo que hay (ordenada por sector)
+function bfImprimirPlanilla(){
+  const L = bfFiltrados();
+  if(!L.length){ toast('⚠️ No hay artículos para imprimir','error'); return; }
+  const porSector = {};
+  L.forEach(b=>(porSector[b.sector||'Sin sector'] = porSector[b.sector||'Sin sector'] || []).push(b));
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Planilla de conteo — Inventario de Fábrica</title>
+  <style>body{font-family:Arial,sans-serif;padding:20px;font-size:11px;color:#1A0F08}h1{font-size:17px;margin:0}
+  h2{font-size:13px;margin:18px 0 6px;padding:5px 8px;background:#F5E6C3;border-radius:4px;page-break-after:avoid}
+  .sub{color:#5C4A3A;margin:4px 0 10px}table{width:100%;border-collapse:collapse;page-break-inside:auto}tr{page-break-inside:avoid}
+  th{background:#F5EDD4;padding:5px;text-align:left;font-size:9.5px;border:1px solid #DDD0B8}td{padding:6px 5px;border:1px solid #DDD0B8}
+  .c{width:62px}.o{width:150px}.n{text-align:right;color:#777}@media print{body{padding:0}}</style></head>
+  <body onload="window.print()">
+  <h1>🧰 Panadería Belén — Planilla de conteo del Inventario de Fábrica</h1>
+  <div class="sub">Fecha del conteo: ____/____/______ · Responsable: ______________________ · Impreso ${new Date().toLocaleString('es-AR')}</div>
+  ${Object.keys(porSector).sort().map(s=>`<h2>📍 ${kxEsc(s)}</h2><table>
+    <tr><th>Categoría</th><th>Artículo</th><th>Medida</th><th class="n">En sistema</th><th class="c">Contado</th><th class="c">A reparar</th><th class="o">Observaciones</th></tr>
+    ${porSector[s].sort((a,b)=>(a.cat||'').localeCompare(b.cat||'') || (a.nombre||'').localeCompare(b.nombre||'')).map(b=>`<tr>
+      <td>${bfIcono(b.cat)} ${kxEsc(b.cat)}</td><td><strong>${kxEsc(b.nombre)}</strong></td><td>${kxEsc(b.medida||'')}</td>
+      <td class="n">${fmtN(b.cant)} ${kxEsc(b.uom)}</td><td></td><td>${b.tipo==='consumible'?'<span style="color:#bbb">—</span>':''}</td><td></td></tr>`).join('')}
+    <tr><td colspan="7" style="color:#999;font-size:9.5px">Artículos encontrados que no están en la lista: _____________________________________________</td></tr></table>`).join('')}
+  </body></html>`;
+  const w = window.open('','_blank');
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); }
+  else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+    a.download = `Planilla_conteo_fabrica_${kxHoy()}.html`; a.click();
+    toast('📥 Se descargó la planilla: abrila y usá Ctrl+P','success');
+  }
+}
+document.addEventListener('DOMContentLoaded', ()=>setTimeout(()=>{ try{ bfActualizarBadge(); }catch(_){} }, 800));
+</script>
+
 <!-- ══════════════════ FIN MÓDULO v33 ══════════════════ -->
 
 </body>
