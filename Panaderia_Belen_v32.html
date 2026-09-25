@@ -15894,6 +15894,7 @@ let kxVerTodosPrecios = false;
   window.renderDashboard = function(){
     const r = orig.apply(this, arguments);
     try{ kxRenderAlertaPrecios(); }catch(e){ console.warn('Alerta precios:', e); }
+    try{ kxRenderReponer(); }catch(e){ console.warn('Reponer:', e); }
     return r;
   };
 })();
@@ -16005,15 +16006,99 @@ function kxGuardarPrecioRapido(mismoPrecio){
 function kxPrecioComoIngreso(){
   const ins = getInsumo(kxVal('kx-pr-insid'));
   if(!ins) return;
-  const precio = parseFloat(kxVal('kx-pr-siniva'))||ins.precio;
-  const iva = kxVal('kx-pr-ivapct'), prov = kxVal('kx-pr-proveedor');
   cerrarModal('kx-modal-precio');
+  kxAbrirIngresoDe(ins.id, {precio: parseFloat(kxVal('kx-pr-siniva'))||ins.precio, iva: kxVal('kx-pr-ivapct'), prov: kxVal('kx-pr-proveedor')});
+}
+
+// Abre "Nuevo Ingreso" con el insumo ya elegido y los datos de la última compra
+function kxAbrirIngresoDe(insId, o){
+  o = o || {};
+  const ins = getInsumo(insId);
+  if(!ins) return;
+  const ult = kxUltimoIngreso(ins) || {};
   abrirModal('modal-materia');
-  const set = (id,v)=>{ const e=document.getElementById(id); if(e && v!=null) e.value=v; };
+  const set = (id,v)=>{ const e=document.getElementById(id); if(e && v!=null && v!=='') e.value=v; };
   set('mp-id', ins.id); set('mp-desc', ins.desc); set('mp-uom', ins.uom); set('mp-categoria', ins.cat);
-  set('mp-proveedor', prov); set('mp-siniva', precio); set('mp-ivapct', iva); set('mp-coniva','');
+  set('mp-proveedor', o.prov || ult.proveedor);
+  set('mp-siniva', o.precio || ins.precio);
+  set('mp-ivapct', o.iva != null && o.iva !== '' ? o.iva : (ult.ivaPct != null ? ult.ivaPct : 21));
+  set('mp-coniva',''); document.getElementById('mp-coniva').value = '';
+  if(o.cantidad) set('mp-cantidad', o.cantidad);
   try{ calcularIVA(); }catch(_){}
-  setTimeout(()=>{ const c=document.getElementById('mp-cantidad'); if(c) c.focus(); }, 100);
+  setTimeout(()=>{ const c=document.getElementById('mp-cantidad'); if(c){ c.focus(); c.select(); } }, 100);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 3b. INSUMOS A REPONER — tocar el insumo para actualizar stock
+// ═══════════════════════════════════════════════════════════════════
+function kxCantSugerida(ins){
+  const stock = Number(ins.stock)||0, min = Number(ins.min)||0, max = Number(ins.max)||0;
+  const objetivo = max > min ? max : min * 2;
+  return Math.max(0, +(objetivo - stock).toFixed(3));
+}
+
+function kxRenderReponer(){
+  const div = document.getElementById('dash-reponer');
+  if(!div) return;
+  const reponer = DB.inventario.filter(i=>i.stock<=i.min);
+  if(!reponer.length) return;
+  div.innerHTML = `<div style="font-size:11px;color:var(--texto-2);padding:8px 14px 0">Tocá un insumo para cargar la compra, corregir el stock o pedirlo</div>
+    <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th><th></th></tr></thead><tbody>` +
+    reponer.map(i=>`<tr style="cursor:pointer" onclick="kxAbrirReponer('${kxEsc(i.id)}')" title="Actualizar stock de ${kxEsc(i.desc)}">
+      <td><strong>${kxEsc(i.desc)}</strong></td>
+      <td style="color:var(--alerta);font-weight:700">${fmtN(i.stock)} ${kxEsc(i.uom||'')}</td>
+      <td>${fmtN(i.min)} ${kxEsc(i.uom||'')}</td>
+      <td><span class="kx-precio-btn" style="background:var(--trigo-lt);border:1px solid var(--trigo);color:var(--trigo-dk);white-space:nowrap">✏️ Actualizar</span></td>
+    </tr>`).join('') + '</tbody></table></div>';
+}
+
+function kxAbrirReponer(insId){
+  const ins = getInsumo(insId);
+  if(!ins) return;
+  const ult = kxUltimoIngreso(ins);
+  const sug = kxCantSugerida(ins);
+  document.getElementById('kx-rp-insid').value = ins.id;
+  document.getElementById('kx-rp-titulo').textContent = ins.desc;
+  document.getElementById('kx-rp-info').innerHTML = `
+    <div>Stock en sistema: <strong style="color:var(--alerta)">${fmtN(ins.stock)} ${kxEsc(ins.uom||'')}</strong> · Mínimo: <strong>${fmtN(ins.min)}</strong>${Number(ins.max)>0?` · Máximo: <strong>${fmtN(ins.max)}</strong>`:''}</div>
+    <div>Cantidad sugerida para reponer: <strong>${fmtN(sug)} ${kxEsc(ins.uom||'')}</strong></div>
+    <div>Última compra: <strong>${ult?kxFechaFmt(ult.fecha):'sin registro'}</strong>${ult&&ult.proveedor?` · ${kxEsc(ult.proveedor)}`:''} · ${fmt$(ins.precio)} sin IVA</div>`;
+  const puede = p => !usuarioActual || tienePermisoPagina(p);
+  document.getElementById('kx-rp-btn-ingreso').style.display = puede('materia') ? '' : 'none';
+  document.getElementById('kx-rp-btn-conteo').style.display  = puede('materia') ? '' : 'none';
+  document.getElementById('kx-rp-btn-pedido').style.display  = puede('pedidos') ? '' : 'none';
+  abrirModal('kx-modal-reponer');
+}
+
+function kxReponerAccion(accion){
+  const ins = getInsumo(kxVal('kx-rp-insid'));
+  if(!ins) return;
+  const sug = kxCantSugerida(ins);
+  cerrarModal('kx-modal-reponer');
+  if(accion==='ingreso'){
+    irAPagina('materia'); try{ cambiarTabMateria('ingresos'); }catch(_){}
+    setTimeout(()=>kxAbrirIngresoDe(ins.id, {cantidad: sug||''}), 60);
+  } else if(accion==='conteo'){
+    irAPagina('materia'); try{ cambiarTabMateria('ingresos'); }catch(_){}
+    setTimeout(()=>{
+      kxAbrirMovManual(ins.id);
+      document.getElementById('kx-mv-tipo').value = 'conteo';
+      kxMovInfo();
+      const c = document.getElementById('kx-mv-cant'); c.focus();
+    }, 60);
+  } else if(accion==='pedido'){
+    irAPagina('pedidos');
+    setTimeout(()=>{
+      abrirModal('modal-pedido');
+      const ult = kxUltimoIngreso(ins);
+      const prov = document.getElementById('ped-proveedor');
+      if(ult && ult.proveedor){ prov.value = ult.proveedor; try{ filtrarInsumosPorProveedor(); }catch(_){} }
+      document.getElementById('ped-insumo').value = ins.id;
+      try{ autocompletarPedido(); }catch(_){}
+      if(sug) document.getElementById('ped-cantidad').value = sug;
+      try{ calcularTotalPedido(); }catch(_){}
+    }, 60);
+  }
 }
 
 // Las actualizaciones de precio no son lotes: se ocultan de "Lotes Activos"
@@ -16167,6 +16252,22 @@ function kxPrecioComoIngreso(){
     </div>
   </div>
 
+
+  <div class="modal-overlay" id="kx-modal-reponer">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header"><span>📦</span><h2 id="kx-rp-titulo">Reponer insumo</h2>
+        <button class="modal-close" onclick="cerrarModal('kx-modal-reponer')">✕</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="kx-rp-insid">
+        <div id="kx-rp-info" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.8;margin-bottom:14px"></div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn-primary" id="kx-rp-btn-ingreso" style="justify-content:flex-start;padding:12px 16px" onclick="kxReponerAccion('ingreso')">📦 Llegó mercadería — cargar el ingreso</button>
+          <button class="btn-secondary" id="kx-rp-btn-conteo" style="justify-content:flex-start;padding:12px 16px" onclick="kxReponerAccion('conteo')">🔢 El stock está mal — corregir por conteo físico</button>
+          <button class="btn-secondary" id="kx-rp-btn-pedido" style="justify-content:flex-start;padding:12px 16px" onclick="kxReponerAccion('pedido')">🛒 Hay que comprarlo — hacer pedido al proveedor</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="modal-overlay" id="kx-modal-mov">
     <div class="modal" style="max-width:560px">
       <div class="modal-header"><span>📒</span><h2>Registrar movimiento de materia prima</h2>
@@ -16203,7 +16304,7 @@ function kxPrecioComoIngreso(){
     </div>
   </div>`);
 
-  ['kx-modal-precio','kx-modal-mov'].forEach(id=>{
+  ['kx-modal-precio','kx-modal-mov','kx-modal-reponer'].forEach(id=>{
     const o = document.getElementById(id);
     if(o) o.addEventListener('click', e=>{ if(e.target===o) o.classList.remove('open'); });
   });
