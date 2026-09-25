@@ -15693,6 +15693,171 @@ window.addEventListener('DOMContentLoaded', ()=>{
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
+// 0. ALMACENAMIENTO GRANDE (IndexedDB)
+//    Chrome limita localStorage a ~5 MB. Los datos del sistema, los backups
+//    diarios, las fotos y la cola de sincronización pasan a IndexedDB, que
+//    admite cientos de MB. El resto del programa sigue usando localStorage
+//    como siempre: acá se redirigen esas claves de forma transparente.
+//    Si el navegador no permite IndexedDB, todo sigue como antes.
+// ═══════════════════════════════════════════════════════════════════
+(function(){
+  const IDB_NOMBRE = 'BelenDB', IDB_STORE = 'kv';
+  const redirigir = k => k===LS_KEY || k==='belen_sync_queue' || String(k).startsWith('belen_backup_') || String(k).startsWith('belen_foto_');
+  const mem = new Map();
+  const SP = Storage.prototype;
+  const origGet = SP.getItem, origSet = SP.setItem, origRem = SP.removeItem;
+  let db = null, listo = false, eventoRetenido = false, pendientes = [];
+  window.kxIdbActivo = false;
+  window.kxIdbMem = mem;
+
+  // Retener el arranque del sistema hasta tener los datos cargados
+  window.addEventListener('DOMContentLoaded', e=>{
+    if(!listo){ e.stopImmediatePropagation(); eventoRetenido = true; }
+  }, true);
+  function liberar(){
+    if(listo) return;
+    listo = true;
+    if(eventoRetenido) document.dispatchEvent(new Event('DOMContentLoaded', {bubbles:true}));
+  }
+  setTimeout(liberar, 5000); // seguro: nunca bloquear el sistema
+
+  function tx(modo){ return db.transaction(IDB_STORE, modo).objectStore(IDB_STORE); }
+  function escribir(k, v){
+    if(!db) return;
+    const pr = new Promise(res=>{
+      try{
+        const t = db.transaction(IDB_STORE,'readwrite');
+        if(v===null) t.objectStore(IDB_STORE).delete(k); else t.objectStore(IDB_STORE).put(v, k);
+        t.oncomplete = ()=>res(true);
+        t.onerror = t.onabort = ()=>{ console.warn('IndexedDB: no se pudo guardar', k, t.error); res(false); };
+      }catch(e){ console.warn('IndexedDB:', e); res(false); }
+    });
+    pendientes.push(pr);
+    pr.then(()=>{ pendientes = pendientes.filter(x=>x!==pr); });
+  }
+  window.kxIdbFlush = ()=>Promise.all(pendientes.slice());
+
+  SP.getItem = function(k){
+    if(window.kxIdbActivo && this===window.localStorage && redirigir(k)) return mem.has(k) ? mem.get(k) : null;
+    return origGet.call(this, k);
+  };
+  SP.setItem = function(k, v){
+    if(window.kxIdbActivo && this===window.localStorage && redirigir(k)){ v = String(v); mem.set(k, v); escribir(k, v); return; }
+    return origSet.call(this, k, v);
+  };
+  SP.removeItem = function(k){
+    if(window.kxIdbActivo && this===window.localStorage && redirigir(k)){ mem.delete(k); escribir(k, null); return; }
+    return origRem.call(this, k);
+  };
+
+  let req;
+  try{ req = indexedDB.open(IDB_NOMBRE, 1); }catch(e){ console.warn('IndexedDB no disponible', e); liberar(); return; }
+  req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+  req.onerror = req.onblocked = ()=>{ console.warn('IndexedDB no disponible'); liberar(); };
+  req.onsuccess = ()=>{
+    db = req.result;
+    const leidos = new Map();
+    const cur = tx('readonly').openCursor();
+    cur.onerror = ()=>{ db = null; liberar(); };
+    cur.onsuccess = ()=>{
+      const c = cur.result;
+      if(c){ leidos.set(c.key, c.value); c.continue(); return; }
+      // Mudanza: lo que todavía está en localStorage pasa a IndexedDB
+      // (si existe en los dos lados, manda localStorage: es lo último que escribió una versión vieja)
+      const mudar = [];
+      for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(k && redirigir(k)) mudar.push(k); }
+      mudar.forEach(k=>leidos.set(k, origGet.call(localStorage, k)));
+      if(!mudar.length){ terminar(leidos, []); return; }
+      const t = db.transaction(IDB_STORE,'readwrite');
+      mudar.forEach(k=>t.objectStore(IDB_STORE).put(leidos.get(k), k));
+      t.oncomplete = ()=>terminar(leidos, mudar);
+      t.onerror = t.onabort = ()=>{ console.warn('Mudanza a IndexedDB falló; se sigue con localStorage'); db = null; liberar(); };
+    };
+  };
+  function terminar(leidos, mudados){
+    leidos.forEach((v,k)=>mem.set(k, v));
+    window.kxIdbActivo = true;
+    mudados.forEach(k=>{ try{ origRem.call(localStorage, k); }catch(_){} });
+    if(mudados.length) console.log(`✅ ${mudados.length} claves mudadas de localStorage a IndexedDB`);
+    try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(_){}
+    try{ navigator.storage.estimate().then(e=>{ window.kxCuotaKB = e.quota/1024; }); }catch(_){}
+    liberar();
+  }
+})();
+
+// Funciones de la v32 que recorrían localStorage directamente
+const KX_MAX_BACKUPS = 7;
+function kxClavesBackup(){
+  const ks = window.kxIdbActivo ? [...window.kxIdbMem.keys()] : Object.keys(localStorage);
+  return ks.filter(k=>k.startsWith(BACKUP_KEY_PREFIX)).sort();
+}
+listarBackups = function(){
+  return kxClavesBackup().reverse().map(k=>({ key:k, fecha:k.replace(BACKUP_KEY_PREFIX,'') }));
+};
+limpiarBackupsViejos = function(){
+  try{ const ks = kxClavesBackup(); while(ks.length > KX_MAX_BACKUPS) localStorage.removeItem(ks.shift()); }catch(_){}
+};
+limpiarBackupsExtra = function(mantener){
+  try{
+    const ks = kxClavesBackup();
+    const borrar = ks.slice(0, Math.max(0, ks.length - (mantener||3)));
+    borrar.forEach(k=>localStorage.removeItem(k));
+    abrirModalBackups();
+    toast(borrar.length ? `🧹 ${borrar.length} backup${borrar.length>1?'s':''} eliminado${borrar.length>1?'s':''}` : 'ℹ️ No hay backups extra para eliminar','success');
+  }catch(e){ toast('Error al limpiar backups: '+e.message,'error'); }
+};
+calcularPesoLS = function(){
+  let total = 0;
+  Object.keys(localStorage).forEach(k=>{ if(k.startsWith('belen_')) total += (localStorage.getItem(k)||'').length*2; });
+  if(window.kxIdbActivo) window.kxIdbMem.forEach(v=>{ total += String(v||'').length*2; });
+  return (total/1024).toFixed(1);
+};
+function kxLimiteKB(){ return window.kxIdbActivo ? Math.min(window.kxCuotaKB || 512000, 1024*1024) : 5120; }
+function kxFmtKB(kb){ kb = Number(kb)||0; return kb >= 1024 ? (kb/1024).toLocaleString('es-AR',{maximumFractionDigits:1})+' MB' : kb.toLocaleString('es-AR',{maximumFractionDigits:1})+' KB'; }
+infoStorage = function(){
+  const peso = parseFloat(calcularPesoLS()), lim = kxLimiteKB(), pct = (peso/lim*100);
+  if(pct > 80){ toast(`⚠️ Almacenamiento al ${pct.toFixed(1)}% — abriendo panel de limpieza…`,'error'); setTimeout(()=>abrirModalBackups(), 600); return; }
+  toast(`💾 ${kxFmtKB(peso)} usados de ${kxFmtKB(lim)} (${pct<0.1?'<0,1':pct.toFixed(1)}%) · ${window.kxIdbActivo?'Almacenamiento ampliado':'localStorage'} · Backups: ${listarBackups().length}`,'success');
+};
+(function(){
+  const orig = abrirModalBackups;
+  abrirModalBackups = function(){
+    orig.apply(this, arguments);
+    const m = document.getElementById('modal-backups');
+    if(!m || !window.kxIdbActivo) return;
+    const peso = parseFloat(calcularPesoLS()), lim = kxLimiteKB(), pct = Math.min(100, peso/lim*100);
+    m.querySelectorAll('span').forEach(sp=>{ if(/\/ 5\.120 KB/.test(sp.textContent)){ sp.textContent = `${kxFmtKB(peso)} / ${kxFmtKB(lim)}`; sp.style.color='var(--vapor-dk)'; } });
+    m.querySelectorAll('div').forEach(d=>{
+      if(/^\d+% utilizado$/.test(d.textContent.trim())) d.textContent = `${pct<0.1?'<0,1':pct.toFixed(1)}% utilizado · almacenamiento ampliado (ya no hay límite de 5 MB)`;
+      if(d.style && d.style.transition==='all 0.3s ease 0s' || (d.getAttribute('style')||'').includes('transition:.3s')){ d.style.width = Math.max(pct,0.5)+'%'; d.style.background='var(--vapor-dk)'; }
+    });
+    m.querySelectorAll('.empty-state p').forEach(p=>{ p.textContent = `Se crean automáticamente cada vez que abrís el sistema (uno por día, máximo ${KX_MAX_BACKUPS})`; });
+  };
+})();
+restaurarBackup = async function(fecha){
+  const data = localStorage.getItem(BACKUP_KEY_PREFIX + fecha);
+  if(!data){ toast('⚠️ Backup no encontrado','error'); return; }
+  if(!confirm(`¿Restaurar el backup del ${fecha.split('-').reverse().join('/')}?\n\nEsto reemplaza los datos actuales. El estado actual se perderá.`)) return;
+  clearTimeout(_saveTimer); _savePendiente = false;
+  localStorage.setItem(LS_KEY, data);
+  if(window.kxIdbFlush) await window.kxIdbFlush();
+  location.reload();
+};
+limpiarStorage = async function(){
+  if(!usuarioActual || !['Dueño','Administrador','Programador'].includes(usuarioActual.rol)){ toast('🔒 Solo el Dueño o Administrador pueden resetear la base de datos','error'); return; }
+  if(!confirm('⚠️ Esta acción borra TODOS los datos del sistema en este navegador y los deja en cero.\n\nAntes de continuar, asegurate de haber exportado una copia.\n\n¿Querés continuar?')) return;
+  const motivo = prompt('Escribí el motivo del reseteo (quedará en Auditoría):');
+  if(!motivo) return;
+  registrarAuditoria('Eliminación','Sistema completo',`Reset de base de datos. Motivo: "${motivo}"`);
+  clearTimeout(_saveTimer); _savePendiente = false;
+  localStorage.removeItem(LS_KEY);
+  if(window.kxIdbFlush) await window.kxIdbFlush();
+  location.reload();
+};
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
 // 1. ESTRUCTURA DE DATOS Y SINCRONIZACIÓN
 // ═══════════════════════════════════════════════════════════════════
 DB.movimientosMP = DB.movimientosMP || [];   // kardex: cada movimiento de stock
@@ -15713,7 +15878,7 @@ const KX_MOTIVOS = {
 };
 const KX_ORIGEN = {
   compra:'Compra', produccion:'Orden de producción', anulacion:'Anulación de orden', decomiso:'Decomiso de lote',
-  pedido:'Pedido compartido', repartidor:'Despacho repartidor', manual:'Carga manual', conteo:'Conteo físico'
+  pedido:'Pedido compartido', repartidor:'Despacho repartidor', manual:'Carga manual', conteo:'Conteo físico', inicial:'Inventario inicial'
 };
 const KX_ARCHIVO_MESES = 3; // meses cerrados que conservan el detalle completo
 
@@ -16294,6 +16459,11 @@ function kxReponerAccion(accion){
             <input type="text" id="kx-mv-ref" placeholder="N° de orden, remito, o ID del movimiento que corrige"></div>
           <div class="form-group span2"><label id="kx-mv-nota-label">Nota</label>
             <textarea id="kx-mv-nota" placeholder="Detalle de lo ocurrido…"></textarea></div>
+          <div class="form-group span2" id="kx-mv-inicial-wrap" style="display:none">
+            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:600">
+              <input type="checkbox" id="kx-mv-inicial" onchange="kxMovInfo()" style="width:auto;margin-top:2px">
+              <span>📋 Es el inventario inicial de este insumo<br><span style="font-weight:400;font-size:11px;color:var(--texto-2)">Fija el stock de arranque. La diferencia con el sistema no cuenta como pérdida ni como sobrante.</span></span>
+            </label></div>
           <div class="form-group span2" id="kx-mv-preview" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px"></div>
         </div>
       </div>
@@ -16420,9 +16590,40 @@ function kxAbrirMovManual(insIdPre){
   document.getElementById('kx-mv-motivo').value = 'vencimiento';
   ['kx-mv-cant','kx-mv-ref','kx-mv-nota'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('kx-mv-fecha').value = kxHoy();
+  document.getElementById('kx-mv-inicial').dataset.ins = '';
   kxMovInfo();
   abrirModal('kx-modal-mov');
 }
+function kxTieneConteo(insId){
+  return (DB.movimientosMP||[]).some(m=>m.ins===insId && (m.org==='conteo' || m.org==='inicial'));
+}
+// Conteos cargados ANTES de esta actualización: el primero de cada insumo pasa a ser su inventario inicial
+// (antes del kardex el sistema no conocía el stock real, así que esa diferencia no es consumo ni pérdida).
+// Los conteos nuevos respetan lo que elige el usuario en la casilla "Es el inventario inicial".
+const KX_MIG_INICIAL_HASTA = Date.parse('2026-09-25T07:30:00Z');
+function kxMigrarInventarioInicial(){
+  try{
+    const vistos = new Set(), cambiar = [];
+    (DB.cierresMP||[]).forEach(c=>{ if(c.estado==='cerrado' && c.informe) (c.informe.filas||[]).forEach(f=>vistos.add(f.ins)); });
+    [...(DB.movimientosMP||[])].sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ts||0)-(b._ts||0)).forEach(m=>{
+      if(m.org!=='conteo' && m.org!=='inicial') return;
+      if(vistos.has(m.ins)) return;
+      vistos.add(m.ins);
+      if(m.org==='conteo' && (m._ts||0) < KX_MIG_INICIAL_HASTA && !kxPeriodoCerrado((m.f||'').slice(0,7))) cambiar.push(m);
+    });
+    if(!cambiar.length) return;
+    cambiar.forEach(m=>{ m.org = 'inicial'; m.nota = String(m.nota||'').replace(/^Conteo:/,'Inventario inicial:'); m._ts = Date.now(); });
+    DB.movimientosMP = DB.movimientosMP.slice();
+    registrarAuditoria('Modificación','Kardex',`${cambiar.length} primer(os) conteo(s) reclasificado(s) como inventario inicial`);
+    if(document.getElementById('page-kardex')?.classList.contains('active')) kxRender();
+  }catch(e){ console.warn('Migración inventario inicial:', e); }
+}
+document.addEventListener('DOMContentLoaded', ()=>setTimeout(kxMigrarInventarioInicial, 400));
+['sincronizarNube','pullSilencioso'].forEach(nombre=>{
+  const orig = window[nombre];
+  if(typeof orig !== 'function') return;
+  window[nombre] = async function(...args){ const r = await orig.apply(this, args); kxMigrarInventarioInicial(); return r; };
+});
 function kxInsumoDeTexto(txt){
   const t = (txt||'').trim();
   const m = t.match(/\(([^()]+)\)\s*$/);
@@ -16440,6 +16641,9 @@ function kxMovInfo(){
   const ins  = kxInsumoDeTexto(kxVal('kx-mv-insumo'));
   const cant = parseFloat(kxVal('kx-mv-cant'));
   document.getElementById('kx-mv-motivo-wrap').style.display = tipo==='merma' ? '' : 'none';
+  const iniWrap = document.getElementById('kx-mv-inicial-wrap'), iniChk = document.getElementById('kx-mv-inicial');
+  iniWrap.style.display = tipo==='conteo' ? '' : 'none';
+  if(tipo==='conteo' && ins && iniChk.dataset.ins !== ins.id){ iniChk.dataset.ins = ins.id; iniChk.checked = !kxTieneConteo(ins.id); }
   document.getElementById('kx-mv-cant-label').textContent =
     tipo==='conteo' ? 'Stock contado físicamente *' : tipo==='ajuste' ? 'Cantidad (+ suma, − resta) *' : 'Cantidad *';
   document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : 'Nota';
@@ -16449,7 +16653,8 @@ function kxMovInfo(){
   const d = kxCalcDeltaManual(ins, tipo, cant);
   const sd = Math.max(0, (Number(ins.stock)||0) + d);
   let extra = '';
-  if(tipo==='conteo') extra = d===0 ? '✅ El conteo coincide con el sistema.'
+  if(tipo==='conteo' && document.getElementById('kx-mv-inicial').checked) extra = '📋 Inventario inicial: el stock queda en lo contado y la diferencia no cuenta como pérdida ni sobrante.';
+  else if(tipo==='conteo') extra = d===0 ? '✅ El conteo coincide con el sistema.'
     : d<0 ? `⚠️ Faltan ${fmtN(-d)} ${ins.uom||''} (${fmt$(-d*ins.precio)}): pérdida no registrada.`
     : `ℹ️ Sobran ${fmtN(d)} ${ins.uom||''} respecto al sistema.`;
   prev.innerHTML = `Stock: <strong>${fmtN(ins.stock)}</strong> → <strong>${fmtN(sd)}</strong> ${ins.uom||''} ·
@@ -16480,11 +16685,12 @@ function kxGuardarMovManual(){
 
   ins.stock = sd;
   const tipoKx = tipo==='conteo' ? 'ajuste' : tipo;
-  const org    = tipo==='conteo' ? 'conteo' : 'manual';
+  const esInicial = tipo==='conteo' && document.getElementById('kx-mv-inicial').checked;
+  const org    = esInicial ? 'inicial' : tipo==='conteo' ? 'conteo' : 'manual';
   kxGuardarMovs([kxNuevoMov({fecha, ins, tipo:tipoKx, org, mot: tipo==='merma'?kxVal('kx-mv-motivo'):'', d, cu:ins.precio, sd, ref,
-    nota: tipo==='conteo' ? `Conteo: ${fmtN(cant)} · sistema: ${fmtN(stockAntes)}${nota?' · '+nota:''}` : nota})]);
+    nota: tipo==='conteo' ? `${esInicial?'Inventario inicial':'Conteo'}: ${fmtN(cant)} · sistema: ${fmtN(stockAntes)}${nota?' · '+nota:''}` : nota})]);
   registrarAuditoria('Modificación', `Kardex ${ins.id} — ${ins.desc}`,
-    `${tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
+    `${esInicial?'Inventario inicial':tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
   cerrarModal('kx-modal-mov');
   toast(`✅ Movimiento registrado · ${ins.desc}: ${fmtN(stockAntes)} → ${fmtN(sd)} ${ins.uom||''}`,'success');
   if(document.getElementById('page-kardex')?.classList.contains('active')) kxRender();
@@ -16497,7 +16703,7 @@ function kxGuardarMovManual(){
 function kxFilaVacia(insId, ds){
   const ins = getInsumo(insId) || {};
   return { ins:insId, desc:ins.desc||ds||insId, cat:ins.cat||'Otros', uom:ins.uom||'', precio:Number(ins.precio)||0,
-    si:0, sf:0, ing:0, ingV:0, egr:0, egrV:0, mer:0, merV:0, ajP:0, ajPV:0, ajN:0, ajNV:0,
+    si:0, ini:0, sf:0, ing:0, ingV:0, egr:0, egrV:0, mer:0, merV:0, ajP:0, ajPV:0, ajN:0, ajNV:0,
     real:0, realV:0, perd:0, perdV:0, sfV:0, motivos:{} };
 }
 
@@ -16516,13 +16722,14 @@ function kxCalcInforme(p){
     if(m.tipo==='ingreso'){ r.ing += m.d; r.ingV += m.d*(m.cu||0); }
     else if(m.tipo==='egreso'){ r.egr -= m.d; r.egrV -= m.d*(m.cu||0); }
     else if(m.tipo==='merma'){ r.mer += q; r.merV += v; const k=m.mot||'otro'; r.motivos[k]=(r.motivos[k]||0)+v; }
+    else if(m.org==='inicial'){ r.ini += m.d; }   // fija el stock de arranque: no es consumo ni pérdida
     else if(m.tipo==='ajuste'){ if(m.d>=0){ r.ajP += q; r.ajPV += v; } else { r.ajN += q; r.ajNV += v; r.motivos.inventario=(r.motivos.inventario||0)+v; } }
   });
   const filas = Object.values(porIns).map(r=>{
     const ins = getInsumo(r.ins);
     const deltaMes = r.ing - r.egr - r.mer + r.ajP - r.ajN;
     const prev = prevFilas ? prevFilas.find(x=>x.ins===r.ins) : null;
-    if(prev){ r.si = prev.sf; r.sf = r.si + deltaMes; }
+    if(prev){ r.si = prev.sf + r.ini; r.sf = r.si + deltaMes; }
     else {
       const despues = (DB.movimientosMP||[]).filter(m=>m.ins===r.ins && (m.f||'').slice(0,7) > p).reduce((s,m)=>s+m.d,0);
       r.sf = (ins ? Number(ins.stock)||0 : 0) - despues;
@@ -16533,7 +16740,7 @@ function kxCalcInforme(p){
     r.perd  = r.mer + r.ajN;
     r.perdV = r.merV + r.ajNV;
     r.sfV   = Math.max(0,r.sf) * r.precio;
-    ['si','sf','ing','egr','mer','ajP','ajN','real','perd'].forEach(k=>r[k]=+r[k].toFixed(4));
+    ['si','ini','sf','ing','egr','mer','ajP','ajN','real','perd'].forEach(k=>r[k]=+r[k].toFixed(4));
     ['ingV','egrV','merV','ajPV','ajNV','realV','perdV','sfV'].forEach(k=>r[k]=+r[k].toFixed(2));
     return r;
   }).sort((a,b)=>b.realV-a.realV);
@@ -16551,6 +16758,8 @@ function kxTotalizar(p, filas){
   });
   T.mermaPct = T.realV > 0 ? T.perdV / T.realV * 100 : 0;
   T.conteos = (DB.movimientosMP||[]).filter(m=>(m.f||'').slice(0,7)===p && m.org==='conteo').length;
+  T.iniciales = (DB.movimientosMP||[]).filter(m=>(m.f||'').slice(0,7)===p && m.org==='inicial').length;
+  T.sobranteV = Math.max(0, T.ajPV - T.ajNV);
   return { periodo:p, filas,
     categorias: Object.values(cats).sort((a,b)=>b.realV-a.realV),
     ranking: filas.filter(r=>r.perdV>0).sort((a,b)=>b.perdV-a.perdV).slice(0,10),
@@ -16580,7 +16789,8 @@ function kxRenderInforme(){
   const banner = inf.cerrado
     ? `<div class="kx-cierre-banner alert-ok">🔒 <strong>Mes cerrado</strong> el ${kxFechaFmt((c.fechaCierre||'').slice(0,10))} por ${kxEsc(c.usuario)}. Estos números están congelados.</div>`
     : `<div class="kx-cierre-banner alert-info">📝 <strong>Mes abierto</strong>: los números pueden cambiar hasta el cierre.
-       ${T.conteos===0?' Todavía no hay conteos físicos este mes: sin conteo, la pérdida oculta no aparece.':` ${T.conteos} conteo(s) físico(s) registrados.`}</div>`;
+       ${T.conteos===0?' Todavía no hay conteos físicos este mes: sin conteo, la pérdida oculta no aparece.':` ${T.conteos} conteo(s) físico(s) registrados.`}
+       ${T.iniciales?`<br>📋 ${T.iniciales} insumo(s) con inventario inicial cargado este mes: fija el stock de arranque y no cuenta como consumo ni pérdida.`:''}</div>`;
 
   const maxCat = Math.max(...inf.categorias.map(x=>x.realV), 1);
   const motivosHtml = Object.entries(inf.motivos).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
@@ -16596,8 +16806,11 @@ function kxRenderInforme(){
         <div class="kpi-sub">órdenes, pedidos y despachos</div>${kxDelta(T.egrV, A.egrV)}</div>
       <div class="kpi-card warn"><div class="kpi-label">Mermas declaradas</div><div class="kpi-value">${fmt$(T.merV)}</div>
         <div class="kpi-sub">vencimientos, roturas, errores</div>${kxDelta(T.merV, A.merV)}</div>
-      <div class="kpi-card warn"><div class="kpi-label">Pérdida oculta</div><div class="kpi-value">${fmt$(T.ajNV - T.ajPV)}</div>
-        <div class="kpi-sub">diferencia real vs recetas (conteos)</div>${kxDelta(T.ajNV-T.ajPV, A.ajNV-A.ajPV)}</div>
+      ${(T.ajNV - T.ajPV) >= 0
+        ? `<div class="kpi-card warn"><div class="kpi-label">Pérdida oculta</div><div class="kpi-value">${fmt$(T.ajNV - T.ajPV)}</div>
+            <div class="kpi-sub">faltantes detectados en conteos</div>${kxDelta(T.ajNV-T.ajPV, A.ajNV-A.ajPV)}</div>`
+        : `<div class="kpi-card ok"><div class="kpi-label">Sobrante de inventario</div><div class="kpi-value" style="color:var(--vapor-dk)">+${fmt$(T.ajPV - T.ajNV)}</div>
+            <div class="kpi-sub">los conteos encontraron más de lo que decía el sistema</div></div>`}
       <div class="kpi-card ${T.mermaPct>5?'warn':'ok'}"><div class="kpi-label">% merma</div><div class="kpi-value">${T.mermaPct.toFixed(1)}%</div>
         <div class="kpi-sub">pérdida total sobre consumo real</div>${kxDelta(T.mermaPct, A.mermaPct)}</div>
       <div class="kpi-card ok"><div class="kpi-label">Compras del mes</div><div class="kpi-value">${fmt$(T.ingV)}</div>
@@ -16630,11 +16843,12 @@ function kxRenderInforme(){
           <th>Dif. inventario</th><th>Stock final</th><th>Consumo real</th><th>Valor consumo</th><th>Valor pérdida</th></tr></thead>
         <tbody>${inf.filas.map(r=>{ const dif = r.ajP - r.ajN; return `<tr>
           <td><strong>${kxEsc(r.desc)}</strong><br><span style="font-size:10px;color:var(--texto-2)">${kxEsc(r.cat)}</span></td>
-          <td>${kxEsc(r.uom)}</td><td>${fmtN(r.si)}</td><td class="kx-pos">${r.ing?'+'+fmtN(r.ing):'—'}</td>
+          <td>${kxEsc(r.uom)}</td><td>${fmtN(r.si)}${r.ini?`<br><span style="font-size:10px;color:var(--texto-2)" title="Incluye el inventario inicial cargado este mes">📋 inicial</span>`:''}</td><td class="kx-pos">${r.ing?'+'+fmtN(r.ing):'—'}</td>
           <td>${r.egr?fmtN(r.egr):'—'}</td><td class="${r.mer?'kx-neg':''}">${r.mer?fmtN(r.mer):'—'}</td>
           <td class="${dif<0?'kx-neg':dif>0?'kx-pos':''}">${dif?(dif>0?'+':'')+fmtN(dif):'—'}</td>
-          <td><strong>${fmtN(r.sf)}</strong></td><td>${fmtN(r.real)}</td>
-          <td><strong>${fmt$(r.realV)}</strong></td><td class="${r.perdV?'kx-neg':''}">${r.perdV?fmt$(r.perdV):'—'}</td></tr>`; }).join('')}
+          <td><strong>${fmtN(r.sf)}</strong></td>${r.real<0
+          ? `<td class="kx-pos">+${fmtN(-r.real)} sobrante</td><td class="kx-pos"><strong>+${fmt$(-r.realV)}</strong></td>`
+          : `<td>${fmtN(r.real)}</td><td><strong>${fmt$(r.realV)}</strong></td>`}<td class="${r.perdV?'kx-neg':''}">${r.perdV?fmt$(r.perdV):'—'}</td></tr>`; }).join('')}
         </tbody>
         <tfoot><tr style="background:var(--miga-dk);font-weight:700">
           <td colspan="9" style="padding:10px 14px">TOTAL · Stock final valorizado: ${fmt$(T.sfV)}</td>
