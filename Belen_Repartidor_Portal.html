@@ -485,22 +485,19 @@ async function enviarPedidoPortal(){
 
   let enviado = false;
 
-  // 1. Intentar guardar en el servidor (Apps Script)
+  // 1. Intentar guardar en el servidor usando accion dedicada (no pisa datos de otras PCs)
   if(SYNC_ACTIVO){
     try{
-      // Bajamos la DB, agregamos el pedido, la subimos
-      const res = await fetch(`${SYNC_URL}?accion=cargarDBCompleta`);
+      const res = await fetch(SYNC_URL, {
+        method:'POST',
+        body: JSON.stringify({
+          accion: 'agregarPedidoRepartidor',
+          pedido,
+          usuario: r.nombre
+        })
+      });
       const data = await res.json();
-      if(data.ok && data.db){
-        data.db.pedidosRepartidores = data.db.pedidosRepartidores||[];
-        data.db.pedidosRepartidores.unshift(pedido);
-        await fetch(SYNC_URL, {method:'POST', body:JSON.stringify({
-          accion:'guardarDBCompleta',
-          db: data.db,
-          guardadoPor: `Portal Repartidor — ${r.nombre} — ${new Date().toLocaleString('es-AR')}`
-        })});
-        enviado = true;
-      }
+      if(data.ok) enviado = true;
     }catch(e){ /* fallback a localStorage */ }
   }
 
