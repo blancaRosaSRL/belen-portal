@@ -15666,5 +15666,1082 @@ window.addEventListener('DOMContentLoaded', ()=>{
   }
 });
 </script>
+<!-- ═══════════════════════════════════════════════════════════════════
+     PANADERÍA BELÉN — MÓDULO v33
+     Kardex de Materia Prima · Informe mensual · Cierre de mes
+     Alerta de precios desactualizados clicable
+     ───────────────────────────────────────────────────────────────────
+     CÓMO INSTALAR: pegar TODO este bloque justo ANTES de la línea
+     </body> del archivo principal (al final de todo). Guardar como v33.
+     No reemplaza nada del archivo: se engancha a las funciones existentes.
+═══════════════════════════════════════════════════════════════════ -->
+<style>
+  .kx-tipo{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+  .kx-ingreso{background:var(--vapor);color:var(--vapor-dk)}
+  .kx-egreso{background:var(--trigo-lt);color:var(--trigo-dk)}
+  .kx-merma{background:var(--alerta-lt);color:var(--alerta)}
+  .kx-ajuste{background:#E8EAF6;color:#3949AB}
+  .kx-pos{color:var(--vapor-dk);font-weight:700}
+  .kx-neg{color:var(--alerta);font-weight:700}
+  .kx-lock{font-size:10px;color:var(--texto-2)}
+  .kx-precio-btn{border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:transform .1s, box-shadow .1s}
+  .kx-precio-btn:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(44,24,16,.18)}
+  .kx-delta{font-size:11px;font-weight:700;margin-top:2px}
+  .kx-cierre-banner{padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px}
+  @media print{ #page-kardex .toolbar, #page-kardex .pedidos-rep-tabs{display:none!important} }
+</style>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// 1. ESTRUCTURA DE DATOS Y SINCRONIZACIÓN
+// ═══════════════════════════════════════════════════════════════════
+DB.movimientosMP = DB.movimientosMP || [];   // kardex: cada movimiento de stock
+DB.cierresMP     = DB.cierresMP     || [];   // cierres mensuales (foto congelada)
+['movimientosMP','cierresMP'].forEach(k=>{
+  if(!LS_KEYS_ARRAYS.includes(k)) LS_KEYS_ARRAYS.push(k);
+  if(!CLOUD_SYNC_ARRAYS.includes(k)) CLOUD_SYNC_ARRAYS.push(k);
+});
+PAGE_TITLES.kardex = 'Kardex de Materia Prima';
+if(Array.isArray(PERMISOS_ROL['Administración']) && !PERMISOS_ROL['Administración'].includes('kardex')){
+  PERMISOS_ROL['Administración'].push('kardex');
+}
+
+const KX_ROLES_ADMIN = ['Dueño','Administrador','Programador'];
+const KX_MOTIVOS = {
+  vencimiento:'⏰ Vencimiento', rotura:'💥 Rotura / derrame', produccion:'🔥 Error de producción',
+  devolucion:'↩️ Devolución a proveedor', plagas:'🐛 Plagas / contaminación', otro:'📌 Otro'
+};
+const KX_ORIGEN = {
+  compra:'Compra', produccion:'Orden de producción', anulacion:'Anulación de orden', decomiso:'Decomiso de lote',
+  pedido:'Pedido compartido', repartidor:'Despacho repartidor', manual:'Carga manual', conteo:'Conteo físico'
+};
+const KX_ARCHIVO_MESES = 3; // meses cerrados que conservan el detalle completo
+
+// ── Helpers ─────────────────────────────────────────────────────────
+function kxHoy(){ return new Date().toISOString().slice(0,10); }
+function kxMesActual(){ return kxHoy().slice(0,7); }
+function kxMesAnterior(p){ const [y,m]=p.split('-').map(Number); const d=new Date(y,m-2,1); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function kxMesNombre(p){ if(!p) return '—'; const [y,m]=p.split('-').map(Number); return new Date(y,m-1,1).toLocaleDateString('es-AR',{month:'long',year:'numeric'}); }
+function kxFechaFmt(f){ return f ? f.split('-').reverse().join('/') : '—'; }
+function kxVal(id){ const el=document.getElementById(id); return el ? el.value : ''; }
+function kxEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function kxEsAdmin(){ return usuarioActual && KX_ROLES_ADMIN.includes(usuarioActual.rol); }
+function kxCierre(p){ return (DB.cierresMP||[]).find(c=>c.periodo===p) || null; }
+function kxPeriodoCerrado(p){ const c=kxCierre(p); return !!(c && c.estado==='cerrado'); }
+function kxFechaBloqueada(f){ return !!f && kxPeriodoCerrado(String(f).slice(0,7)); }
+function kxAvisoBloqueo(f){
+  toast(`🔒 ${kxMesNombre(String(f).slice(0,7))} está cerrado. Registrá la corrección como ajuste con fecha de hoy desde Kardex MP.`,'error');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 2. MOTOR DEL KARDEX — registra cada cambio de stock
+// ═══════════════════════════════════════════════════════════════════
+function kxSnapshotStock(){
+  const m = {};
+  (DB.inventario||[]).forEach(i=>{ m[i.id] = {s:Number(i.stock)||0, p:Number(i.precio)||0}; });
+  return m;
+}
+
+function kxNuevoMov(o){
+  return {
+    id: 'KX' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2,6).toUpperCase(),
+    f: o.fecha || kxHoy(),
+    ins: o.ins.id, ds: o.ins.desc||'',
+    tipo: o.tipo,                   // ingreso | egreso | merma | ajuste
+    org: o.org || 'manual',         // de dónde vino el movimiento
+    mot: o.mot || '',               // motivo de merma
+    d: +Number(o.d).toFixed(4),     // cantidad con signo (+ entra, − sale)
+    cu: +(Number(o.cu)||0).toFixed(4), // costo unitario sin IVA al momento
+    sd: +Number(o.sd).toFixed(4),   // stock resultante después del movimiento
+    ref: o.ref || '', nota: o.nota || '',
+    u: usuarioActual ? (getAlias(usuarioActual.id) || usuarioActual.nombre) : '—',
+    _ts: Date.now()
+  };
+}
+
+function kxGuardarMovs(movs){
+  if(!movs.length) return;
+  DB.movimientosMP.push(...movs);                 // dispara el autoguardado
+  try{ encolarCambio('movimientosMP','upsert',{id:'KX-LOTE'}); }catch(_){}
+}
+
+function kxRegistrarDiferencias(antes, ctx){
+  const movs = [];
+  (DB.inventario||[]).forEach(ins=>{
+    const a  = antes[ins.id];
+    const sA = a ? a.s : 0;
+    const sD = Number(ins.stock)||0;
+    const d  = +(sD - sA).toFixed(4);
+    if(Math.abs(d) < 0.00005) return;
+    const tipo = ctx.tipo || (d > 0 ? 'ingreso' : 'egreso');
+    const cu   = d > 0 ? (Number(ins.precio)||0) : (a ? a.p : Number(ins.precio)||0);
+    movs.push(kxNuevoMov({fecha:ctx.fecha, ins, tipo, org:ctx.org, mot:ctx.mot, d, cu, sd:sD, ref:ctx.ref, nota:ctx.nota}));
+  });
+  kxGuardarMovs(movs);
+  return movs.length;
+}
+
+// Envuelve una función existente: toma foto del stock antes y después
+function kxEnvolver(nombre, preFn, ctxFn){
+  const orig = window[nombre];
+  if(typeof orig !== 'function'){ console.warn('Kardex: no se encontró la función', nombre); return; }
+  window[nombre] = function(...args){
+    if(preFn && preFn(...args) === false) return;
+    const ctx   = ctxFn ? (ctxFn(...args) || {}) : {};
+    const antes = kxSnapshotStock();
+    const res   = orig.apply(this, args);
+    try{ kxRegistrarDiferencias(antes, ctx); }catch(e){ console.warn('Kardex:', e); }
+    return res;
+  };
+}
+
+// ── Ingresos de materia prima ──────────────────────────────────────
+kxEnvolver('guardarMateriaPrima',
+  ()=>{
+    const f = kxVal('mp-fecha');
+    if(kxFechaBloqueada(f)){ kxAvisoBloqueo(f); return false; }
+    // FIX: si el insumo ya existe, sumar al mismo en vez de crear un duplicado
+    const desc = kxVal('mp-desc').trim().toLowerCase();
+    const idEl = document.getElementById('mp-id');
+    const ex = desc ? DB.inventario.find(i=>(i.desc||'').trim().toLowerCase()===desc) : null;
+    if(ex && idEl && idEl.value !== ex.id){
+      const uomForm = kxVal('mp-uom');
+      if(uomForm && ex.uom && uomForm !== ex.uom){
+        if(!confirm(`"${ex.desc}" ya existe en inventario con unidad ${ex.uom}, pero cargaste ${uomForm}.\n\n¿Sumarlo igual al insumo existente (${ex.id})?`)) return false;
+      }
+      idEl.value = ex.id;
+      const cat = document.getElementById('mp-categoria');
+      if(cat && !cat.value && ex.cat) cat.value = ex.cat;
+    }
+  },
+  ()=>({ fecha:kxVal('mp-fecha'), org:'compra',
+         ref: kxVal('mp-lote') ? 'Lote '+kxVal('mp-lote') : '',
+         nota: kxVal('mp-proveedor') ? 'Proveedor: '+kxVal('mp-proveedor') : '' })
+);
+
+// ── Órdenes de producción (egreso automático al ejecutar) ──────────
+kxEnvolver('guardarOrdenProduccion',
+  ()=>{
+    const f = kxVal('op-fecha');
+    if(kxVal('op-estado')==='Ejecutada' && kxFechaBloqueada(f)){ kxAvisoBloqueo(f); return false; }
+  },
+  ()=>({ fecha:kxVal('op-fecha'), org:'produccion', ref:kxVal('op-nro') })
+);
+kxEnvolver('confirmarEdicionOrden',
+  ()=>{
+    const f = kxVal('eop-fecha');
+    if(kxVal('eop-estado')==='Ejecutada' && kxFechaBloqueada(f)){ kxAvisoBloqueo(f); return false; }
+  },
+  ()=>({ fecha:kxVal('eop-fecha'), org:'produccion', ref:(typeof ordenEnAccion!=='undefined'?ordenEnAccion:'') })
+);
+
+// FIX: al eliminar una orden ejecutada, reponía "cantidad × unidades" solo de la masa.
+// En órdenes por piezas eso devolvía de más. Ahora repone exactamente lo que se descontó.
+window.confirmarEliminacionOrden = function(){
+  const motivo = document.getElementById('del-motivo').value.trim();
+  if(!motivo){ toast('⚠️ Ingresá el motivo de la eliminación','error'); return; }
+  const o = DB.ordenes.find(x=>x.nro===ordenEnAccion);
+  if(!o) return;
+  let devolucionTxt = '';
+  if(o.estado==='Ejecutada'){
+    const rec = getReceta(o.recetaId);
+    if(rec){
+      const mapa = insumosNecesariosReceta(rec, o.lotes || o.unidades);
+      Object.entries(mapa).forEach(([insId, q])=>{
+        const ins = getInsumo(insId);
+        if(ins) ins.stock = +(Number(ins.stock) + q).toFixed(4);
+      });
+      devolucionTxt = ' · Stock repuesto al inventario (la orden estaba Ejecutada)';
+    }
+  }
+  DB.ordenes = DB.ordenes.filter(x=>x.nro!==ordenEnAccion);
+  registrarAuditoria('Eliminación', `Orden ${o.nro} — ${o.producto}`,
+    `Motivo: "${motivo}". Datos eliminados: ${o.unidades} ${o.modo==='piezas'?'piezas':'lote(s)'}, estado "${o.estado}", fecha ${o.fecha}${devolucionTxt}`);
+  cerrarModal('modal-eliminar-orden');
+  toast(`🗑️ Orden ${o.nro} eliminada${devolucionTxt?' · Stock repuesto':''}`,'success');
+  renderProduccion();
+  renderDashboard();
+};
+kxEnvolver('confirmarEliminacionOrden', null,
+  ()=>({ fecha:kxHoy(), org:'anulacion', tipo:'egreso',
+         ref:(typeof ordenEnAccion!=='undefined'?ordenEnAccion:''), nota:'Reintegro por anulación de orden' })
+);
+
+// ── Decomiso de lotes → merma por vencimiento ─────────────────────
+kxEnvolver('guardarEdicionMateriaPrima',
+  ()=>{
+    const idx = (typeof materiaPrimaEditandoIdx!=='undefined') ? materiaPrimaEditandoIdx : -1;
+    const r = DB.materiaPrima[idx];
+    if(r && kxFechaBloqueada(r.fecha)){ kxAvisoBloqueo(r.fecha); return false; }
+    const nf = kxVal('emp-fecha');
+    if(kxFechaBloqueada(nf)){ kxAvisoBloqueo(nf); return false; }
+  },
+  ()=>({ fecha:kxHoy(), org:'decomiso', tipo:'merma', mot:'vencimiento',
+         ref: kxVal('emp-lote') ? 'Lote '+kxVal('emp-lote') : '', nota: kxVal('emp-motivo') })
+);
+
+// ── Pedidos compartidos y despachos a repartidores ────────────────
+kxEnvolver('avanzarEstadoPedidoCompartido', null, (id)=>({ fecha:kxHoy(), org:'pedido', ref:id }));
+kxEnvolver('despacharPedidoRepartidor',     null, (id)=>({ fecha:kxHoy(), org:'repartidor', ref:id }));
+
+// ═══════════════════════════════════════════════════════════════════
+// 3. ALERTA DE PRECIOS DEL DASHBOARD — ahora clicable
+// ═══════════════════════════════════════════════════════════════════
+let kxVerTodosPrecios = false;
+
+(function(){
+  const orig = renderDashboard;
+  window.renderDashboard = function(){
+    const r = orig.apply(this, arguments);
+    try{ kxRenderAlertaPrecios(); }catch(e){ console.warn('Alerta precios:', e); }
+    return r;
+  };
+})();
+
+function kxRenderAlertaPrecios(){
+  const el = document.getElementById('dash-precios-vencidos');
+  if(!el) return;
+  const lista = insumosConPrecioVencido(30);
+  if(!lista.length){ el.style.display='none'; return; }
+  el.style.display = 'block';
+  const visibles = kxVerTodosPrecios ? lista : lista.slice(0,12);
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:20px">⏰</span>
+      <div style="flex:1;min-width:200px">
+        <strong style="font-size:13px">${lista.length} insumo${lista.length!==1?'s':''} sin actualizar precio (más de 30 días)</strong>
+        <div style="font-size:11px;color:var(--texto-2)">Tocá un insumo para actualizar su precio directamente</div>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${visibles.map(({ins,diasSinActualizar})=>{
+        const rojo = diasSinActualizar>60;
+        return `<button type="button" class="kx-precio-btn" onclick="kxIrAActualizarPrecio('${kxEsc(ins.id)}')"
+          title="Actualizar precio de ${kxEsc(ins.desc)}"
+          style="background:${rojo?'var(--alerta-lt)':'var(--naranja-lt)'};border:1px solid ${rojo?'var(--alerta)':'#FF9800'};color:${rojo?'var(--alerta)':'#E65100'}">
+          ✏️ ${kxEsc(ins.desc)} (${diasSinActualizar===Infinity?'sin registro':diasSinActualizar+' días'})
+        </button>`;
+      }).join('')}
+      ${lista.length>12?`<button type="button" class="btn-secondary" style="padding:4px 11px;font-size:11px;border-radius:20px"
+        onclick="kxVerTodosPrecios=!kxVerTodosPrecios;kxRenderAlertaPrecios()">
+        ${kxVerTodosPrecios?'▲ Ver menos':'▼ Ver los '+lista.length}</button>`:''}
+    </div>`;
+}
+
+function kxUltimoIngreso(ins){
+  const d = (ins.desc||'').trim().toLowerCase();
+  const regs = (DB.materiaPrima||[]).filter(r=>(r.desc||'').trim().toLowerCase()===d);
+  if(!regs.length) return null;
+  return regs.reduce((a,b)=>(b.fecha||'') > (a.fecha||'') ? b : a, regs[0]);
+}
+
+function kxIrAActualizarPrecio(insId){
+  irAPagina('materia');
+  try{ cambiarTabMateria('ingresos'); }catch(_){}
+  setTimeout(()=>kxAbrirPrecioRapido(insId), 60);
+}
+
+function kxAbrirPrecioRapido(insId){
+  const ins = getInsumo(insId);
+  if(!ins){ toast('⚠️ No se encontró el insumo','error'); return; }
+  const ult  = kxUltimoIngreso(ins);
+  const dias = ult && ult.fecha ? Math.floor((new Date() - new Date(ult.fecha)) / 86400000) : null;
+  document.getElementById('kx-pr-insid').value = ins.id;
+  document.getElementById('kx-pr-titulo').textContent = ins.desc;
+  document.getElementById('kx-pr-info').innerHTML = `
+    <div>Precio actual: <strong>${fmt$(ins.precio)}</strong> sin IVA por ${kxEsc(ins.uom||'unidad')}</div>
+    <div>Última actualización: <strong>${ult?kxFechaFmt(ult.fecha):'sin registro'}</strong>${dias!==null?` (hace ${dias} días)`:''}${ult&&ult.proveedor?` · ${kxEsc(ult.proveedor)}`:''}</div>
+    <div>Stock: <strong>${fmtN(ins.stock)} ${kxEsc(ins.uom||'')}</strong></div>`;
+  const selP = document.getElementById('kx-pr-proveedor');
+  selP.innerHTML = '<option value="">Seleccionar…</option>' +
+    DB.proveedores.filter(p=>p.estado==='Activo').map(p=>`<option ${ult&&p.razon===ult.proveedor?'selected':''}>${kxEsc(p.razon)}</option>`).join('');
+  document.getElementById('kx-pr-siniva').value = Number(ins.precio)||'';
+  document.getElementById('kx-pr-ivapct').value = String(ult && ult.ivaPct!=null ? ult.ivaPct : 21);
+  document.getElementById('kx-pr-fecha').value = kxHoy();
+  kxCalcPrecioRapido();
+  abrirModal('kx-modal-precio');
+  setTimeout(()=>{ const i=document.getElementById('kx-pr-siniva'); i.focus(); i.select(); }, 120);
+}
+
+function kxCalcPrecioRapido(){
+  const s = parseFloat(kxVal('kx-pr-siniva'))||0;
+  const p = parseFloat(kxVal('kx-pr-ivapct'))||0;
+  document.getElementById('kx-pr-coniva').textContent = fmt$(s*(1+p/100));
+  const ins = getInsumo(kxVal('kx-pr-insid'));
+  const box = document.getElementById('kx-pr-variacion');
+  if(ins && Number(ins.precio)>0 && s>0){
+    const v = (s - ins.precio) / ins.precio * 100;
+    box.innerHTML = Math.abs(v) < 0.05 ? 'Sin cambios respecto al precio actual'
+      : `<span class="${v>0?'kx-neg':'kx-pos'}">${v>0?'▲':'▼'} ${v>0?'+':''}${v.toFixed(1)}%</span> respecto al precio actual`;
+  } else box.textContent = '';
+}
+
+function kxGuardarPrecioRapido(mismoPrecio){
+  const ins = getInsumo(kxVal('kx-pr-insid'));
+  if(!ins) return;
+  const sinIVA = mismoPrecio ? (Number(ins.precio)||0) : (parseFloat(kxVal('kx-pr-siniva'))||0);
+  if(!(sinIVA>0)){ toast('⚠️ Ingresá un precio mayor a $0','error'); return; }
+  const ivaPct = parseFloat(kxVal('kx-pr-ivapct'))||0;
+  const fecha  = kxVal('kx-pr-fecha') || kxHoy();
+  const prov   = kxVal('kx-pr-proveedor') || (kxUltimoIngreso(ins)||{}).proveedor || '—';
+  const anterior = Number(ins.precio)||0;
+  DB.materiaPrima.push({
+    fecha, id:ins.id, desc:ins.desc, cat:ins.cat||'Otros', uom:ins.uom, proveedor:prov,
+    lote:'', vto:'', cantidad:0, sinIVA, ivaPct, conIVA:+(sinIVA*(1+ivaPct/100)).toFixed(2),
+    obs: mismoPrecio ? 'Precio confirmado sin cambios' : 'Actualización de precio',
+    decomiso:false, soloPrecio:true
+  });
+  ins.precio = sinIVA;
+  registrarAuditoria('Modificación', `Precio ${ins.id} — ${ins.desc}`,
+    mismoPrecio ? `Precio confirmado sin cambios: ${fmt$(sinIVA)}` : `Precio actualizado: ${fmt$(anterior)} → ${fmt$(sinIVA)} · Proveedor: ${prov}`);
+  try{ tomarSnapshotCostos(); }catch(_){}
+  cerrarModal('kx-modal-precio');
+  toast(mismoPrecio ? `✅ ${ins.desc}: precio confirmado` : `✅ ${ins.desc}: ${fmt$(anterior)} → ${fmt$(sinIVA)}`,'success');
+  renderMateriaPrima();
+  renderDashboard();
+}
+
+// Si en realidad llegó mercadería, se carga como ingreso normal (suma stock)
+function kxPrecioComoIngreso(){
+  const ins = getInsumo(kxVal('kx-pr-insid'));
+  if(!ins) return;
+  const precio = parseFloat(kxVal('kx-pr-siniva'))||ins.precio;
+  const iva = kxVal('kx-pr-ivapct'), prov = kxVal('kx-pr-proveedor');
+  cerrarModal('kx-modal-precio');
+  abrirModal('modal-materia');
+  const set = (id,v)=>{ const e=document.getElementById(id); if(e && v!=null) e.value=v; };
+  set('mp-id', ins.id); set('mp-desc', ins.desc); set('mp-uom', ins.uom); set('mp-categoria', ins.cat);
+  set('mp-proveedor', prov); set('mp-siniva', precio); set('mp-ivapct', iva); set('mp-coniva','');
+  try{ calcularIVA(); }catch(_){}
+  setTimeout(()=>{ const c=document.getElementById('mp-cantidad'); if(c) c.focus(); }, 100);
+}
+
+// Las actualizaciones de precio no son lotes: se ocultan de "Lotes Activos"
+['renderLotesActivos','exportarLotesCSV'].forEach(nombre=>{
+  const orig = window[nombre];
+  if(typeof orig !== 'function') return;
+  window[nombre] = function(...args){
+    const todo = DB.materiaPrima;
+    if(!todo.some(r=>r.soloPrecio)) return orig.apply(this,args);
+    DB.materiaPrima = todo.filter(r=>!r.soloPrecio);
+    try{ return orig.apply(this,args); } finally { DB.materiaPrima = todo; }
+  };
+});
+
+// Autocompletar insumos existentes al cargar un ingreso (evita duplicados por tipeo)
+(function(){
+  const orig = initFormMateria;
+  window.initFormMateria = function(){
+    const r = orig.apply(this, arguments);
+    try{
+      let dl = document.getElementById('kx-dl-mp');
+      if(!dl){ dl = document.createElement('datalist'); dl.id='kx-dl-mp'; document.body.appendChild(dl); }
+      dl.innerHTML = [...new Set(DB.inventario.map(i=>i.desc).filter(Boolean))].sort()
+        .map(d=>`<option value="${kxEsc(d)}">`).join('');
+      const inp = document.getElementById('mp-desc');
+      inp.setAttribute('list','kx-dl-mp');
+      if(!inp._kx){
+        inp._kx = true;
+        inp.addEventListener('change', ()=>{
+          const ex = DB.inventario.find(i=>(i.desc||'').trim().toLowerCase()===inp.value.trim().toLowerCase());
+          if(!ex) return;
+          document.getElementById('mp-id').value = ex.id;
+          if(ex.uom) document.getElementById('mp-uom').value = ex.uom;
+          if(ex.cat) document.getElementById('mp-categoria').value = ex.cat;
+          toast(`ℹ️ "${ex.desc}" ya existe (${ex.id}): el ingreso se suma a su stock`,'success');
+        });
+      }
+    }catch(e){ console.warn(e); }
+    return r;
+  };
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// 4. INTERFAZ: menú, página, modales
+// ═══════════════════════════════════════════════════════════════════
+(function kxInyectarUI(){
+  const btnMat = document.querySelector('.nav-btn[onclick*="\'materia\'"]');
+  if(btnMat) btnMat.insertAdjacentHTML('afterend',
+    `<button class="nav-btn" onclick="showPage('kardex',this)"><span class="icon">📒</span> Kardex e Informe MP</button>`);
+
+  const tbMat = document.querySelector('#materia-tab-ingresos .toolbar');
+  if(tbMat) tbMat.insertAdjacentHTML('beforeend',
+    `<button class="btn-secondary" onclick="kxAbrirMovManual()">📉 Merma / conteo / egreso</button>`);
+
+  const pageHtml = `
+  <div class="page" id="page-kardex">
+    <div class="page-hero">
+      <h2>📒 Kardex de Materia Prima</h2>
+      <p>Cada ingreso, egreso, merma y ajuste queda registrado con su costo del momento · Informe mensual y cierre de período</p>
+    </div>
+    <div class="pedidos-rep-tabs" style="margin-bottom:16px">
+      <button class="pedidos-rep-tab active" data-kxtab="movs" onclick="kxTab('movs')">📋 Movimientos</button>
+      <button class="pedidos-rep-tab" data-kxtab="informe" onclick="kxTab('informe')">📊 Informe mensual</button>
+      <button class="pedidos-rep-tab" data-kxtab="cierres" onclick="kxTab('cierres')">🔒 Cierres de mes</button>
+    </div>
+
+    <div id="kx-tab-movs">
+      <div class="toolbar">
+        <input type="month" id="kx-f-mes" onchange="kxRenderMovs()" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+        <input class="search-input" id="kx-f-txt" placeholder="Buscar insumo, referencia o usuario…" oninput="kxRenderMovs()">
+        <select id="kx-f-tipo" onchange="kxRenderMovs()" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+          <option value="">Todos los tipos</option><option value="ingreso">📥 Ingresos</option>
+          <option value="egreso">📤 Egresos</option><option value="merma">⚠️ Mermas</option><option value="ajuste">⚖️ Ajustes</option>
+        </select>
+        <button class="btn-secondary" onclick="kxExportarMovsCSV()">📊 Exportar CSV</button>
+        <button class="btn-primary" onclick="kxAbrirMovManual()">+ Registrar movimiento</button>
+      </div>
+      <div id="kx-movs-resumen" class="kpi-grid" style="margin-bottom:14px"></div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Insumo</th><th>Tipo</th><th>Origen / motivo</th><th>Cantidad</th>
+          <th>$ unit.</th><th>Valor</th><th>Stock result.</th><th>Referencia</th><th>Usuario</th></tr></thead>
+        <tbody id="kx-tbl-movs"></tbody>
+      </table></div></div>
+      <div id="kx-movs-mas" style="text-align:center;margin-top:10px"></div>
+    </div>
+
+    <div id="kx-tab-informe" style="display:none">
+      <div class="toolbar">
+        <input type="month" id="kx-inf-mes" onchange="kxRenderInforme()" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+        <button class="btn-secondary" onclick="kxExportarInformeCSV()">📊 Exportar CSV</button>
+        <button class="btn-secondary" onclick="kxImprimirInforme()">🖨️ Imprimir / PDF para los dueños</button>
+      </div>
+      <div id="kx-informe"></div>
+    </div>
+
+    <div id="kx-tab-cierres" style="display:none">
+      <div class="card" style="margin-bottom:16px"><div class="modal-body">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div class="form-group" style="margin:0"><label>Mes a cerrar</label>
+            <input type="month" id="kx-cierre-mes" style="padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px"></div>
+          <button class="btn-primary" onclick="kxCerrarMes()">🔒 Cerrar mes</button>
+        </div>
+        <div style="font-size:12px;color:var(--texto-2);margin-top:10px;line-height:1.6">
+          Al cerrar, el informe del mes queda congelado y no se pueden cargar, editar ni borrar movimientos con fecha de ese mes.
+          Si hay un error, se corrige con un ajuste en el mes actual que referencie el movimiento original.
+          Solo Dueño o Administrador pueden cerrar y reabrir.
+        </div>
+      </div></div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Período</th><th>Estado</th><th>Consumo real</th><th>Pérdida</th><th>% merma</th><th>Cerrado por</th><th>Historial</th><th></th></tr></thead>
+        <tbody id="kx-tbl-cierres"></tbody>
+      </table></div></div>
+    </div>
+  </div>`;
+  const pm = document.getElementById('page-materia');
+  if(pm) pm.insertAdjacentHTML('afterend', pageHtml);
+
+  const ivaOpts = `<option value="0">0% — Exento</option><option value="2.5">2.5%</option><option value="5">5%</option>
+    <option value="10.5">10.5% — Alimentos</option><option value="21">21% — General</option><option value="26">26%</option><option value="27">27%</option>`;
+
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="modal-overlay" id="kx-modal-precio">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header"><span>💲</span><h2 id="kx-pr-titulo">Actualizar precio</h2>
+        <button class="modal-close" onclick="cerrarModal('kx-modal-precio')">✕</button></div>
+      <div class="modal-body">
+        <input type="hidden" id="kx-pr-insid">
+        <div id="kx-pr-info" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.7;margin-bottom:14px"></div>
+        <div class="form-grid">
+          <div class="form-group"><label>Nuevo $ sin IVA *</label>
+            <input type="number" id="kx-pr-siniva" step="0.01" min="0" oninput="kxCalcPrecioRapido()"
+              onkeydown="if(event.key==='Enter') kxGuardarPrecioRapido(false)"></div>
+          <div class="form-group"><label>IVA %</label>
+            <select id="kx-pr-ivapct" onchange="kxCalcPrecioRapido()">${ivaOpts}</select></div>
+          <div class="form-group"><label>Proveedor</label><select id="kx-pr-proveedor"></select></div>
+          <div class="form-group"><label>Fecha</label><input type="date" id="kx-pr-fecha"></div>
+          <div class="form-group span2" style="background:var(--trigo-lt);border-radius:8px;padding:10px 14px">
+            <div style="font-size:12px">Precio con IVA: <strong id="kx-pr-coniva" style="font-size:16px;color:var(--trigo-dk)">$0</strong></div>
+            <div id="kx-pr-variacion" style="font-size:12px;margin-top:4px"></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--texto-2);margin-top:12px">
+          Solo actualiza el precio (no suma stock) y recalcula el costo de las recetas.
+          <a href="#" onclick="kxPrecioComoIngreso();return false" style="color:var(--trigo-dk);font-weight:600">¿Llegó mercadería? Cargalo como ingreso →</a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="kxGuardarPrecioRapido(true)">✅ El precio sigue igual</button>
+        <button class="btn-primary" onclick="kxGuardarPrecioRapido(false)">💾 Guardar nuevo precio</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="kx-modal-mov">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header"><span>📒</span><h2>Registrar movimiento de materia prima</h2>
+        <button class="modal-close" onclick="cerrarModal('kx-modal-mov')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group span2"><label>Insumo *</label>
+            <input type="text" id="kx-mv-insumo" list="kx-dl-insumos" placeholder="Escribí para buscar…" oninput="kxMovInfo()" autocomplete="off">
+            <datalist id="kx-dl-insumos"></datalist>
+            <span class="hint" id="kx-mv-stock"></span></div>
+          <div class="form-group"><label>Tipo de movimiento *</label>
+            <select id="kx-mv-tipo" onchange="kxMovInfo()">
+              <option value="merma">⚠️ Merma / pérdida</option>
+              <option value="conteo">🔢 Conteo físico (stock real)</option>
+              <option value="egreso">📤 Egreso (uso fuera de orden)</option>
+              <option value="ajuste">⚖️ Ajuste correctivo (+/−)</option>
+            </select></div>
+          <div class="form-group" id="kx-mv-motivo-wrap"><label>Motivo de la merma *</label>
+            <select id="kx-mv-motivo">${Object.entries(KX_MOTIVOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+          <div class="form-group"><label id="kx-mv-cant-label">Cantidad *</label>
+            <input type="number" id="kx-mv-cant" step="0.001" oninput="kxMovInfo()"></div>
+          <div class="form-group"><label>Fecha</label><input type="date" id="kx-mv-fecha"></div>
+          <div class="form-group span2"><label>Referencia</label>
+            <input type="text" id="kx-mv-ref" placeholder="N° de orden, remito, o ID del movimiento que corrige"></div>
+          <div class="form-group span2"><label id="kx-mv-nota-label">Nota</label>
+            <textarea id="kx-mv-nota" placeholder="Detalle de lo ocurrido…"></textarea></div>
+          <div class="form-group span2" id="kx-mv-preview" style="background:var(--miga-dk);border-radius:8px;padding:10px 14px;font-size:12px"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="cerrarModal('kx-modal-mov')">Cancelar</button>
+        <button class="btn-primary" onclick="kxGuardarMovManual()">✅ Registrar</button>
+      </div>
+    </div>
+  </div>`);
+
+  ['kx-modal-precio','kx-modal-mov'].forEach(id=>{
+    const o = document.getElementById(id);
+    if(o) o.addEventListener('click', e=>{ if(e.target===o) o.classList.remove('open'); });
+  });
+})();
+
+(function(){
+  const orig = showPage;
+  window.showPage = function(id, btn){
+    const r = orig.apply(this, arguments);
+    const pg = document.getElementById('page-kardex');
+    if(id==='kardex' && pg && pg.classList.contains('active')) kxRender();
+    return r;
+  };
+})();
+
+let kxTabActiva = 'movs';
+let kxLimite = 150;
+function kxTab(t){
+  kxTabActiva = t;
+  ['movs','informe','cierres'].forEach(x=>{ const el=document.getElementById('kx-tab-'+x); if(el) el.style.display = x===t?'':'none'; });
+  document.querySelectorAll('#page-kardex .pedidos-rep-tab').forEach(b=>b.classList.toggle('active', b.dataset.kxtab===t));
+  kxRender();
+}
+function kxRender(){
+  ['kx-f-mes','kx-inf-mes','kx-cierre-mes'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el && !el.value) el.value = id==='kx-cierre-mes' ? kxMesAnterior(kxMesActual()) : kxMesActual();
+  });
+  if(kxTabActiva==='movs') kxRenderMovs();
+  if(kxTabActiva==='informe') kxRenderInforme();
+  if(kxTabActiva==='cierres') kxRenderCierres();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 5. TAB MOVIMIENTOS
+// ═══════════════════════════════════════════════════════════════════
+function kxBadgeTipo(m){
+  const t = {ingreso:'📥 Ingreso', egreso:'📤 Egreso', merma:'⚠️ Merma', ajuste:'⚖️ Ajuste'};
+  return `<span class="kx-tipo kx-${m.tipo}">${t[m.tipo]||m.tipo}</span>`;
+}
+function kxOrigenTxt(m){
+  let s = KX_ORIGEN[m.org] || m.org || '';
+  if(m.tipo==='merma' && m.mot) s += ' · ' + (KX_MOTIVOS[m.mot]||m.mot);
+  return s;
+}
+function kxMovsFiltrados(){
+  const mes = kxVal('kx-f-mes'), txt = kxVal('kx-f-txt').trim().toLowerCase(), tipo = kxVal('kx-f-tipo');
+  return (DB.movimientosMP||[]).filter(m=>{
+    if(mes && (m.f||'').slice(0,7)!==mes) return false;
+    if(tipo && m.tipo!==tipo) return false;
+    if(txt && !`${m.ds} ${m.ref} ${m.u} ${m.nota} ${m.id}`.toLowerCase().includes(txt)) return false;
+    return true;
+  }).sort((a,b)=> (b.f||'').localeCompare(a.f||'') || (b._ts||0)-(a._ts||0));
+}
+function kxRenderMovs(){
+  const movs = kxMovsFiltrados();
+  const tbody = document.getElementById('kx-tbl-movs');
+  if(!tbody) return;
+  const sum = t => movs.filter(m=>m.tipo===t).reduce((s,m)=>s+Math.abs(m.d)*m.cu,0);
+  document.getElementById('kx-movs-resumen').innerHTML = `
+    <div class="kpi-card ok"><div class="kpi-label">📥 Ingresos</div><div class="kpi-value">${fmt$(sum('ingreso'))}</div><div class="kpi-sub">${movs.filter(m=>m.tipo==='ingreso').length} movimientos</div></div>
+    <div class="kpi-card gold"><div class="kpi-label">📤 Egresos</div><div class="kpi-value">${fmt$(sum('egreso'))}</div><div class="kpi-sub">${movs.filter(m=>m.tipo==='egreso').length} movimientos</div></div>
+    <div class="kpi-card warn"><div class="kpi-label">⚠️ Mermas</div><div class="kpi-value">${fmt$(sum('merma'))}</div><div class="kpi-sub">${movs.filter(m=>m.tipo==='merma').length} movimientos</div></div>
+    <div class="kpi-card"><div class="kpi-label">⚖️ Ajustes</div><div class="kpi-value">${movs.filter(m=>m.tipo==='ajuste').length}</div><div class="kpi-sub">conteos y correcciones</div></div>`;
+  setTimeout(ajustarTamKpis, 0);
+
+  if(!movs.length){
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="es-icon">📒</div><h4>Sin movimientos para este filtro</h4>
+      <p>Los ingresos, órdenes ejecutadas, decomisos y despachos se registran solos desde ahora. Las mermas y conteos se cargan con "+ Registrar movimiento".</p></div></td></tr>`;
+    document.getElementById('kx-movs-mas').innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = movs.slice(0, kxLimite).map(m=>{
+    const lock = kxPeriodoCerrado((m.f||'').slice(0,7));
+    return `<tr>
+      <td>${kxFechaFmt(m.f)}${lock?'<br><span class="kx-lock">🔒 cerrado</span>':''}</td>
+      <td><strong>${kxEsc(m.ds)}</strong><br><span class="mono" style="font-size:10px">${kxEsc(m.ins)} · ${kxEsc(m.id)}</span></td>
+      <td>${kxBadgeTipo(m)}</td>
+      <td style="font-size:12px">${kxEsc(kxOrigenTxt(m))}${m.nota?`<br><span style="font-size:11px;color:var(--texto-2)">${kxEsc(m.nota)}</span>`:''}</td>
+      <td class="${m.d>=0?'kx-pos':'kx-neg'}">${m.d>0?'+':''}${fmtN(m.d)} ${kxEsc((getInsumo(m.ins)||{}).uom||'')}</td>
+      <td>${fmt$(m.cu)}</td>
+      <td><strong>${fmt$(Math.abs(m.d)*m.cu)}</strong></td>
+      <td>${fmtN(m.sd)}</td>
+      <td style="font-size:12px">${kxEsc(m.ref||'—')}</td>
+      <td style="font-size:12px">${kxEsc(m.u||'—')}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('kx-movs-mas').innerHTML = movs.length > kxLimite
+    ? `<button class="btn-secondary" onclick="kxLimite+=300;kxRenderMovs()">Mostrar más (${movs.length-kxLimite} restantes)</button>` : '';
+}
+
+function kxExportarMovsCSV(){
+  const movs = kxMovsFiltrados();
+  if(!movs.length){ toast('⚠️ Sin movimientos para exportar','error'); return; }
+  const filas = [['ID','Fecha','Cód. insumo','Insumo','Categoría','UOM','Tipo','Origen','Motivo merma','Cantidad','Costo unit. s/IVA','Valor','Stock resultante','Referencia','Nota','Usuario']];
+  movs.slice().reverse().forEach(m=>{
+    const ins = getInsumo(m.ins)||{};
+    filas.push([m.id, m.f, m.ins, m.ds, ins.cat||'', ins.uom||'', m.tipo, KX_ORIGEN[m.org]||m.org,
+      m.mot?(KX_MOTIVOS[m.mot]||m.mot).replace(/^\S+\s/,''):'', m.d, m.cu, +(Math.abs(m.d)*m.cu).toFixed(2), m.sd, m.ref, m.nota, m.u]);
+  });
+  descargarCSV(filas, `Kardex_MP_${kxVal('kx-f-mes')||'completo'}.csv`);
+  toast('📊 Kardex exportado · Abrilo con Excel','success');
+}
+
+// ── Movimiento manual (merma, conteo, egreso, ajuste) ─────────────
+function kxAbrirMovManual(insIdPre){
+  document.getElementById('kx-dl-insumos').innerHTML = DB.inventario
+    .filter(i=>(i.estado||'Activo')==='Activo')
+    .map(i=>`<option value="${kxEsc(i.desc)} (${kxEsc(i.id)})">`).join('');
+  const pre = insIdPre ? getInsumo(insIdPre) : null;
+  document.getElementById('kx-mv-insumo').value = pre ? `${pre.desc} (${pre.id})` : '';
+  document.getElementById('kx-mv-tipo').value = 'merma';
+  document.getElementById('kx-mv-motivo').value = 'vencimiento';
+  ['kx-mv-cant','kx-mv-ref','kx-mv-nota'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('kx-mv-fecha').value = kxHoy();
+  kxMovInfo();
+  abrirModal('kx-modal-mov');
+}
+function kxInsumoDeTexto(txt){
+  const t = (txt||'').trim();
+  const m = t.match(/\(([^()]+)\)\s*$/);
+  if(m){ const i = getInsumo(m[1].trim()); if(i) return i; }
+  return DB.inventario.find(i=>(i.desc||'').trim().toLowerCase()===t.toLowerCase()) || null;
+}
+function kxCalcDeltaManual(ins, tipo, cant){
+  const stock = Number(ins.stock)||0;
+  if(tipo==='conteo') return +(Math.max(0,cant) - stock).toFixed(4);
+  if(tipo==='ajuste') return +cant;
+  return -Math.abs(cant);
+}
+function kxMovInfo(){
+  const tipo = kxVal('kx-mv-tipo');
+  const ins  = kxInsumoDeTexto(kxVal('kx-mv-insumo'));
+  const cant = parseFloat(kxVal('kx-mv-cant'));
+  document.getElementById('kx-mv-motivo-wrap').style.display = tipo==='merma' ? '' : 'none';
+  document.getElementById('kx-mv-cant-label').textContent =
+    tipo==='conteo' ? 'Stock contado físicamente *' : tipo==='ajuste' ? 'Cantidad (+ suma, − resta) *' : 'Cantidad *';
+  document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : 'Nota';
+  document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtN(ins.stock)} ${ins.uom||''} · $${fmtN(ins.precio)} sin IVA` : '';
+  const prev = document.getElementById('kx-mv-preview');
+  if(!ins || isNaN(cant)){ prev.innerHTML = 'Elegí el insumo y la cantidad para ver el efecto.'; return; }
+  const d = kxCalcDeltaManual(ins, tipo, cant);
+  const sd = Math.max(0, (Number(ins.stock)||0) + d);
+  let extra = '';
+  if(tipo==='conteo') extra = d===0 ? '✅ El conteo coincide con el sistema.'
+    : d<0 ? `⚠️ Faltan ${fmtN(-d)} ${ins.uom||''} (${fmt$(-d*ins.precio)}): pérdida no registrada.`
+    : `ℹ️ Sobran ${fmtN(d)} ${ins.uom||''} respecto al sistema.`;
+  prev.innerHTML = `Stock: <strong>${fmtN(ins.stock)}</strong> → <strong>${fmtN(sd)}</strong> ${ins.uom||''} ·
+    Movimiento: <span class="${d>=0?'kx-pos':'kx-neg'}">${d>0?'+':''}${fmtN(d)}</span> ·
+    Valor: <strong>${fmt$(Math.abs(d)*(Number(ins.precio)||0))}</strong>${extra?'<br>'+extra:''}`;
+}
+function kxGuardarMovManual(){
+  const ins  = kxInsumoDeTexto(kxVal('kx-mv-insumo'));
+  const tipo = kxVal('kx-mv-tipo');
+  const cant = parseFloat(kxVal('kx-mv-cant'));
+  const fecha = kxVal('kx-mv-fecha') || kxHoy();
+  const ref  = kxVal('kx-mv-ref').trim();
+  const nota = kxVal('kx-mv-nota').trim();
+  if(!ins){ toast('⚠️ Elegí un insumo de la lista','error'); return; }
+  if(isNaN(cant) || (tipo!=='conteo' && cant===0) || (tipo!=='ajuste' && cant<0)){ toast('⚠️ Ingresá una cantidad válida','error'); return; }
+  if(kxFechaBloqueada(fecha)){ kxAvisoBloqueo(fecha); return; }
+  if(tipo==='ajuste' && !nota){ toast('⚠️ En un ajuste correctivo explicá qué corrige','error'); return; }
+  if(fecha > kxHoy()){ toast('⚠️ La fecha no puede ser futura','error'); return; }
+
+  const stockAntes = Number(ins.stock)||0;
+  let d = kxCalcDeltaManual(ins, tipo, cant);
+  if(stockAntes + d < 0){
+    if(!confirm(`El stock en sistema es ${fmtN(stockAntes)} ${ins.uom||''}, menor a lo que vas a descontar.\n\nEl stock quedará en 0. ¿Continuar?`)) return;
+  }
+  const sd = Math.max(0, +(stockAntes + d).toFixed(4));
+  d = +(sd - stockAntes).toFixed(4);
+  if(d===0 && tipo!=='conteo'){ toast('ℹ️ El movimiento no cambia el stock','error'); return; }
+
+  ins.stock = sd;
+  const tipoKx = tipo==='conteo' ? 'ajuste' : tipo;
+  const org    = tipo==='conteo' ? 'conteo' : 'manual';
+  kxGuardarMovs([kxNuevoMov({fecha, ins, tipo:tipoKx, org, mot: tipo==='merma'?kxVal('kx-mv-motivo'):'', d, cu:ins.precio, sd, ref,
+    nota: tipo==='conteo' ? `Conteo: ${fmtN(cant)} · sistema: ${fmtN(stockAntes)}${nota?' · '+nota:''}` : nota})]);
+  registrarAuditoria('Modificación', `Kardex ${ins.id} — ${ins.desc}`,
+    `${tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
+  cerrarModal('kx-modal-mov');
+  toast(`✅ Movimiento registrado · ${ins.desc}: ${fmtN(stockAntes)} → ${fmtN(sd)} ${ins.uom||''}`,'success');
+  if(document.getElementById('page-kardex')?.classList.contains('active')) kxRender();
+  try{ renderInventario(); }catch(_){}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 6. INFORME MENSUAL
+// ═══════════════════════════════════════════════════════════════════
+function kxFilaVacia(insId, ds){
+  const ins = getInsumo(insId) || {};
+  return { ins:insId, desc:ins.desc||ds||insId, cat:ins.cat||'Otros', uom:ins.uom||'', precio:Number(ins.precio)||0,
+    si:0, sf:0, ing:0, ingV:0, egr:0, egrV:0, mer:0, merV:0, ajP:0, ajPV:0, ajN:0, ajNV:0,
+    real:0, realV:0, perd:0, perdV:0, sfV:0, motivos:{} };
+}
+
+// Calcula el informe de un mes. Si el mes está cerrado, devuelve la foto congelada.
+function kxCalcInforme(p){
+  const c = kxCierre(p);
+  if(c && c.estado==='cerrado' && c.informe) return {...c.informe, cerrado:true, cierre:c};
+
+  const prevC = kxCierre(kxMesAnterior(p));
+  const prevFilas = (prevC && prevC.estado==='cerrado' && prevC.informe) ? prevC.informe.filas : null;
+  const porIns = {};
+  (DB.movimientosMP||[]).forEach(m=>{
+    if((m.f||'').slice(0,7)!==p) return;
+    const r = porIns[m.ins] || (porIns[m.ins] = kxFilaVacia(m.ins, m.ds));
+    const q = Math.abs(m.d), v = q*(m.cu||0);
+    if(m.tipo==='ingreso'){ r.ing += m.d; r.ingV += m.d*(m.cu||0); }
+    else if(m.tipo==='egreso'){ r.egr -= m.d; r.egrV -= m.d*(m.cu||0); }
+    else if(m.tipo==='merma'){ r.mer += q; r.merV += v; const k=m.mot||'otro'; r.motivos[k]=(r.motivos[k]||0)+v; }
+    else if(m.tipo==='ajuste'){ if(m.d>=0){ r.ajP += q; r.ajPV += v; } else { r.ajN += q; r.ajNV += v; r.motivos.inventario=(r.motivos.inventario||0)+v; } }
+  });
+  const filas = Object.values(porIns).map(r=>{
+    const ins = getInsumo(r.ins);
+    const deltaMes = r.ing - r.egr - r.mer + r.ajP - r.ajN;
+    const prev = prevFilas ? prevFilas.find(x=>x.ins===r.ins) : null;
+    if(prev){ r.si = prev.sf; r.sf = r.si + deltaMes; }
+    else {
+      const despues = (DB.movimientosMP||[]).filter(m=>m.ins===r.ins && (m.f||'').slice(0,7) > p).reduce((s,m)=>s+m.d,0);
+      r.sf = (ins ? Number(ins.stock)||0 : 0) - despues;
+      r.si = r.sf - deltaMes;
+    }
+    r.real  = r.egr + r.mer + r.ajN - r.ajP;          // = SI + ingresos − SF
+    r.realV = r.egrV + r.merV + r.ajNV - r.ajPV;
+    r.perd  = r.mer + r.ajN;
+    r.perdV = r.merV + r.ajNV;
+    r.sfV   = Math.max(0,r.sf) * r.precio;
+    ['si','sf','ing','egr','mer','ajP','ajN','real','perd'].forEach(k=>r[k]=+r[k].toFixed(4));
+    ['ingV','egrV','merV','ajPV','ajNV','realV','perdV','sfV'].forEach(k=>r[k]=+r[k].toFixed(2));
+    return r;
+  }).sort((a,b)=>b.realV-a.realV);
+  return kxTotalizar(p, filas);
+}
+
+function kxTotalizar(p, filas){
+  const T = {ingV:0, egrV:0, merV:0, ajPV:0, ajNV:0, realV:0, perdV:0, sfV:0};
+  const cats = {}, motivos = {};
+  filas.forEach(r=>{
+    Object.keys(T).forEach(k=>T[k]+=r[k]||0);
+    const c = cats[r.cat] || (cats[r.cat] = {cat:r.cat, realV:0, perdV:0, ingV:0});
+    c.realV += r.realV; c.perdV += r.perdV; c.ingV += r.ingV;
+    Object.entries(r.motivos||{}).forEach(([k,v])=>motivos[k]=(motivos[k]||0)+v);
+  });
+  T.mermaPct = T.realV > 0 ? T.perdV / T.realV * 100 : 0;
+  T.conteos = (DB.movimientosMP||[]).filter(m=>(m.f||'').slice(0,7)===p && m.org==='conteo').length;
+  return { periodo:p, filas,
+    categorias: Object.values(cats).sort((a,b)=>b.realV-a.realV),
+    ranking: filas.filter(r=>r.perdV>0).sort((a,b)=>b.perdV-a.perdV).slice(0,10),
+    motivos, totales:T };
+}
+
+function kxDelta(act, ant, inverso){
+  if(!(ant>0)) return '<div class="kx-delta" style="color:var(--texto-2)">sin dato del mes anterior</div>';
+  const v = (act-ant)/ant*100;
+  const malo = inverso ? v<0 : v>0;
+  return `<div class="kx-delta" style="color:${Math.abs(v)<0.5?'var(--texto-2)':malo?'var(--alerta)':'var(--vapor-dk)'}">
+    ${v>0?'▲':v<0?'▼':'='} ${v>0?'+':''}${v.toFixed(1)}% vs mes anterior</div>`;
+}
+
+function kxRenderInforme(){
+  const p = kxVal('kx-inf-mes') || kxMesActual();
+  const cont = document.getElementById('kx-informe');
+  if(!cont) return;
+  const inf = kxCalcInforme(p), ant = kxCalcInforme(kxMesAnterior(p));
+  const T = inf.totales, A = ant.totales;
+  if(!inf.filas.length){
+    cont.innerHTML = `<div class="card"><div class="empty-state"><div class="es-icon">📊</div><h4>Sin movimientos en ${kxMesNombre(p)}</h4>
+      <p>El informe se arma con los movimientos del kardex. Se generan solos al cargar ingresos, ejecutar órdenes y decomisar lotes.</p></div></div>`;
+    return;
+  }
+  const c = inf.cierre;
+  const banner = inf.cerrado
+    ? `<div class="kx-cierre-banner alert-ok">🔒 <strong>Mes cerrado</strong> el ${kxFechaFmt((c.fechaCierre||'').slice(0,10))} por ${kxEsc(c.usuario)}. Estos números están congelados.</div>`
+    : `<div class="kx-cierre-banner alert-info">📝 <strong>Mes abierto</strong>: los números pueden cambiar hasta el cierre.
+       ${T.conteos===0?' Todavía no hay conteos físicos este mes: sin conteo, la pérdida oculta no aparece.':` ${T.conteos} conteo(s) físico(s) registrados.`}</div>`;
+
+  const maxCat = Math.max(...inf.categorias.map(x=>x.realV), 1);
+  const motivosHtml = Object.entries(inf.motivos).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+    <div class="bar-row"><span class="bar-label">${k==='inventario'?'🔢 Diferencia de inventario':(KX_MOTIVOS[k]||k)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(v/Math.max(T.perdV,1)*100).toFixed(0)}%;background:var(--alerta)"></div></div>
+      <span class="bar-val">${fmt$(v)}</span></div>`).join('');
+
+  cont.innerHTML = banner + `
+    <div class="kpi-grid">
+      <div class="kpi-card gold"><div class="kpi-label">Consumo real</div><div class="kpi-value">${fmt$(T.realV)}</div>
+        <div class="kpi-sub">stock inicial + compras − stock final</div>${kxDelta(T.realV, A.realV)}</div>
+      <div class="kpi-card"><div class="kpi-label">Consumo según recetas</div><div class="kpi-value">${fmt$(T.egrV)}</div>
+        <div class="kpi-sub">órdenes, pedidos y despachos</div>${kxDelta(T.egrV, A.egrV)}</div>
+      <div class="kpi-card warn"><div class="kpi-label">Mermas declaradas</div><div class="kpi-value">${fmt$(T.merV)}</div>
+        <div class="kpi-sub">vencimientos, roturas, errores</div>${kxDelta(T.merV, A.merV)}</div>
+      <div class="kpi-card warn"><div class="kpi-label">Pérdida oculta</div><div class="kpi-value">${fmt$(T.ajNV - T.ajPV)}</div>
+        <div class="kpi-sub">diferencia real vs recetas (conteos)</div>${kxDelta(T.ajNV-T.ajPV, A.ajNV-A.ajPV)}</div>
+      <div class="kpi-card ${T.mermaPct>5?'warn':'ok'}"><div class="kpi-label">% merma</div><div class="kpi-value">${T.mermaPct.toFixed(1)}%</div>
+        <div class="kpi-sub">pérdida total sobre consumo real</div>${kxDelta(T.mermaPct, A.mermaPct)}</div>
+      <div class="kpi-card ok"><div class="kpi-label">Compras del mes</div><div class="kpi-value">${fmt$(T.ingV)}</div>
+        <div class="kpi-sub">ingresos valorizados s/IVA</div>${kxDelta(T.ingV, A.ingV)}</div>
+    </div>
+
+    <div class="dash-grid">
+      <div class="card"><div class="card-header"><h3>📦 Consumo real por categoría</h3></div>
+        <div class="mini-bar-chart">${inf.categorias.map(x=>`
+          <div class="bar-row"><span class="bar-label" title="${kxEsc(x.cat)}">${kxEsc(x.cat)}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${(Math.max(0,x.realV)/maxCat*100).toFixed(0)}%"></div></div>
+            <span class="bar-val">${fmt$(x.realV)}</span></div>`).join('')}</div></div>
+      <div class="card"><div class="card-header"><h3>⚠️ Pérdida por motivo</h3></div>
+        <div class="mini-bar-chart">${motivosHtml||'<div class="empty-state" style="padding:16px"><p>Sin mermas ni diferencias este mes ✅</p></div>'}</div></div>
+    </div>
+
+    <div class="card"><div class="card-header"><h3>🏆 Top 10 insumos con mayor pérdida</h3></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>Insumo</th><th>Categoría</th><th>Cantidad perdida</th><th>Valor perdido</th><th>% de su consumo</th></tr></thead>
+        <tbody>${inf.ranking.length ? inf.ranking.map((r,i)=>`<tr>
+          <td><strong>${i+1}</strong></td><td><strong>${kxEsc(r.desc)}</strong></td><td>${kxEsc(r.cat)}</td>
+          <td>${fmtN(r.perd)} ${kxEsc(r.uom)}</td><td class="kx-neg">${fmt$(r.perdV)}</td>
+          <td>${r.realV>0?(r.perdV/r.realV*100).toFixed(1)+'%':'—'}</td></tr>`).join('')
+          : '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--texto-2)">Sin pérdidas registradas este mes ✅</td></tr>'}</tbody>
+      </table></div></div>
+
+    <div class="card"><div class="card-header"><h3>📋 Detalle por insumo — ${kxMesNombre(p)}</h3></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Insumo</th><th>UOM</th><th>Stock inicial</th><th>Compras</th><th>Consumo recetas</th><th>Mermas</th>
+          <th>Dif. inventario</th><th>Stock final</th><th>Consumo real</th><th>Valor consumo</th><th>Valor pérdida</th></tr></thead>
+        <tbody>${inf.filas.map(r=>{ const dif = r.ajP - r.ajN; return `<tr>
+          <td><strong>${kxEsc(r.desc)}</strong><br><span style="font-size:10px;color:var(--texto-2)">${kxEsc(r.cat)}</span></td>
+          <td>${kxEsc(r.uom)}</td><td>${fmtN(r.si)}</td><td class="kx-pos">${r.ing?'+'+fmtN(r.ing):'—'}</td>
+          <td>${r.egr?fmtN(r.egr):'—'}</td><td class="${r.mer?'kx-neg':''}">${r.mer?fmtN(r.mer):'—'}</td>
+          <td class="${dif<0?'kx-neg':dif>0?'kx-pos':''}">${dif?(dif>0?'+':'')+fmtN(dif):'—'}</td>
+          <td><strong>${fmtN(r.sf)}</strong></td><td>${fmtN(r.real)}</td>
+          <td><strong>${fmt$(r.realV)}</strong></td><td class="${r.perdV?'kx-neg':''}">${r.perdV?fmt$(r.perdV):'—'}</td></tr>`; }).join('')}
+        </tbody>
+        <tfoot><tr style="background:var(--miga-dk);font-weight:700">
+          <td colspan="9" style="padding:10px 14px">TOTAL · Stock final valorizado: ${fmt$(T.sfV)}</td>
+          <td style="padding:10px 14px">${fmt$(T.realV)}</td><td style="padding:10px 14px" class="kx-neg">${fmt$(T.perdV)}</td></tr></tfoot>
+      </table></div></div>`;
+  setTimeout(ajustarTamKpis, 0);
+}
+
+function kxExportarInformeCSV(){
+  const p = kxVal('kx-inf-mes') || kxMesActual();
+  const inf = kxCalcInforme(p), T = inf.totales;
+  const filas = [
+    [`INFORME DE MATERIA PRIMA — ${kxMesNombre(p).toUpperCase()} — PANADERÍA BELÉN`],
+    [inf.cerrado ? `Mes cerrado el ${(inf.cierre.fechaCierre||'').slice(0,10)} por ${inf.cierre.usuario}` : 'Mes abierto (valores provisorios)'],
+    [],
+    ['Consumo real', +T.realV.toFixed(2)], ['Consumo según recetas', +T.egrV.toFixed(2)],
+    ['Mermas declaradas', +T.merV.toFixed(2)], ['Pérdida oculta (conteos)', +(T.ajNV-T.ajPV).toFixed(2)],
+    ['% merma', +T.mermaPct.toFixed(2)], ['Compras del mes', +T.ingV.toFixed(2)], ['Stock final valorizado', +T.sfV.toFixed(2)],
+    [],
+    ['Insumo','Categoría','UOM','Stock inicial','Compras','Consumo recetas','Mermas','Dif. inventario','Stock final','Consumo real','Valor consumo','Valor pérdida']
+  ];
+  inf.filas.forEach(r=>filas.push([r.desc,r.cat,r.uom,r.si,r.ing,r.egr,r.mer,+(r.ajP-r.ajN).toFixed(4),r.sf,r.real,r.realV,r.perdV]));
+  filas.push([]); filas.push(['CONSUMO POR CATEGORÍA','Valor consumo','Valor pérdida']);
+  inf.categorias.forEach(c=>filas.push([c.cat, +c.realV.toFixed(2), +c.perdV.toFixed(2)]));
+  descargarCSV(filas, `Informe_MP_${p}.csv`);
+  toast('📊 Informe exportado · Abrilo con Excel','success');
+}
+
+function kxImprimirInforme(){
+  const p = kxVal('kx-inf-mes') || kxMesActual();
+  const inf = kxCalcInforme(p), ant = kxCalcInforme(kxMesAnterior(p)), T = inf.totales, A = ant.totales;
+  if(!inf.filas.length){ toast('⚠️ Sin datos para ese mes','error'); return; }
+  const var$ = (a,b)=> b>0 ? `${a>=b?'▲':'▼'} ${((a-b)/b*100).toFixed(1)}%` : '—';
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Informe MP ${p} — Panadería Belén</title>
+  <style>body{font-family:Arial,sans-serif;padding:24px;color:#1A0F08;font-size:12px}
+  h1{font-size:20px;color:#2C1810;margin:0}h2{font-size:14px;color:#5C3D2E;margin:20px 0 8px;border-bottom:2px solid #DDD0B8;padding-bottom:4px}
+  .sub{color:#5C4A3A;margin:4px 0 16px}.k{display:flex;gap:10px;flex-wrap:wrap}.kp{flex:1;min-width:120px;background:#F5E6C3;border-radius:8px;padding:10px;text-align:center}
+  .kv{font-size:16px;font-weight:700;color:#8B5E08}.kl{font-size:9px;text-transform:uppercase;color:#5C4A3A}.kd{font-size:10px;color:#5C4A3A}
+  table{width:100%;border-collapse:collapse}th{background:#F5EDD4;padding:6px;text-align:left;font-size:10px}td{padding:5px 6px;border-bottom:1px solid #F0E8D0}
+  .r{text-align:right}.neg{color:#C0392B}@media print{body{padding:0}}</style></head>
+  <body onload="window.print()">
+  <h1>🥖 Panadería Belén — Informe de Materia Prima</h1>
+  <div class="sub">${kxMesNombre(p)} · ${inf.cerrado?'Mes cerrado':'Mes abierto (provisorio)'} · Emitido ${new Date().toLocaleString('es-AR')}</div>
+  <div class="k">
+    <div class="kp"><div class="kv">${fmt$(T.realV)}</div><div class="kl">Consumo real</div><div class="kd">${var$(T.realV,A.realV)}</div></div>
+    <div class="kp"><div class="kv">${fmt$(T.egrV)}</div><div class="kl">Según recetas</div><div class="kd">${var$(T.egrV,A.egrV)}</div></div>
+    <div class="kp"><div class="kv">${fmt$(T.perdV)}</div><div class="kl">Pérdida total</div><div class="kd">${var$(T.perdV,A.perdV)}</div></div>
+    <div class="kp"><div class="kv">${T.mermaPct.toFixed(1)}%</div><div class="kl">% merma</div><div class="kd">mes ant.: ${A.mermaPct.toFixed(1)}%</div></div>
+    <div class="kp"><div class="kv">${fmt$(T.ingV)}</div><div class="kl">Compras</div><div class="kd">${var$(T.ingV,A.ingV)}</div></div>
+  </div>
+  <h2>Consumo por categoría</h2><table><tr><th>Categoría</th><th class="r">Consumo</th><th class="r">Pérdida</th></tr>
+  ${inf.categorias.map(c=>`<tr><td>${kxEsc(c.cat)}</td><td class="r">${fmt$(c.realV)}</td><td class="r neg">${c.perdV?fmt$(c.perdV):'—'}</td></tr>`).join('')}</table>
+  <h2>Top 10 pérdidas</h2><table><tr><th>#</th><th>Insumo</th><th class="r">Cantidad</th><th class="r">Valor</th></tr>
+  ${inf.ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${kxEsc(r.desc)}</td><td class="r">${fmtN(r.perd)} ${kxEsc(r.uom)}</td><td class="r neg">${fmt$(r.perdV)}</td></tr>`).join('')||'<tr><td colspan="4">Sin pérdidas registradas</td></tr>'}</table>
+  <h2>Detalle por insumo</h2><table><tr><th>Insumo</th><th class="r">Inicial</th><th class="r">Compras</th><th class="r">Recetas</th><th class="r">Mermas</th><th class="r">Dif. inv.</th><th class="r">Final</th><th class="r">Consumo $</th></tr>
+  ${inf.filas.map(r=>`<tr><td>${kxEsc(r.desc)} <span style="color:#888">${kxEsc(r.uom)}</span></td><td class="r">${fmtN(r.si)}</td><td class="r">${fmtN(r.ing)}</td><td class="r">${fmtN(r.egr)}</td><td class="r">${fmtN(r.mer)}</td><td class="r">${fmtN(r.ajP-r.ajN)}</td><td class="r">${fmtN(r.sf)}</td><td class="r">${fmt$(r.realV)}</td></tr>`).join('')}</table>
+  </body></html>`;
+  const w = window.open('','_blank');
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); }
+  else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+    a.download = `Informe_MP_${p}.html`; a.click();
+    toast('📥 Se descargó el informe: abrilo y usá Ctrl+P para guardarlo como PDF','success');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 7. CIERRE DE MES
+// ═══════════════════════════════════════════════════════════════════
+function kxCerrarMes(){
+  if(!kxEsAdmin()){ toast('🔒 Solo Dueño o Administrador pueden cerrar un mes','error'); return; }
+  const p = kxVal('kx-cierre-mes');
+  if(!p){ toast('⚠️ Elegí el mes a cerrar','error'); return; }
+  if(kxPeriodoCerrado(p)){ toast(`ℹ️ ${kxMesNombre(p)} ya está cerrado`,'error'); return; }
+
+  // Validación 1: órdenes abiertas del mes
+  const abiertas = (DB.ordenes||[]).filter(o=>(o.fecha||'').slice(0,7)===p && o.estado!=='Ejecutada');
+  if(abiertas.length){
+    alert(`🚫 No se puede cerrar ${kxMesNombre(p)}: hay ${abiertas.length} orden(es) de producción sin ejecutar:\n\n` +
+      abiertas.slice(0,15).map(o=>`• ${o.nro} — ${o.producto} (${o.estado})`).join('\n') +
+      `\n\nEjecutalas o eliminalas antes de cerrar.`);
+    return;
+  }
+  // Validación 2: mes anterior abierto
+  const prevP = kxMesAnterior(p);
+  const prevTieneMovs = (DB.movimientosMP||[]).some(m=>(m.f||'').slice(0,7)===prevP);
+  if(prevTieneMovs && !kxPeriodoCerrado(prevP)){
+    if(!confirm(`⚠️ ${kxMesNombre(prevP)} todavía no está cerrado.\nLo recomendable es cerrar los meses en orden.\n\n¿Cerrar ${kxMesNombre(p)} igual?`)) return;
+  }
+  // Validación 3: mes en curso
+  if(p >= kxMesActual()){
+    if(!confirm(`⚠️ ${kxMesNombre(p)} todavía no terminó.\nSi lo cerrás, no se podrán cargar más movimientos con fecha de este mes.\n\n¿Continuar?`)) return;
+  }
+  const inf = kxCalcInforme(p);
+  if(!inf.filas.length && !confirm(`${kxMesNombre(p)} no tiene movimientos registrados.\n¿Cerrarlo igual?`)) return;
+  // Validación 4: conteos físicos
+  if(inf.filas.length && inf.totales.conteos===0){
+    if(!confirm(`⚠️ No hay conteos físicos cargados en ${kxMesNombre(p)}.\n\nSin conteo, el consumo real queda igual al de las recetas y la pérdida oculta no aparece en el informe.\n\n¿Cerrar igual?`)) return;
+  }
+  if(!confirm(`🔒 Cerrar ${kxMesNombre(p)}\n\nConsumo real: ${fmt$(inf.totales.realV)}\nPérdida total: ${fmt$(inf.totales.perdV)} (${inf.totales.mermaPct.toFixed(1)}%)\n\nEl informe queda congelado. ¿Confirmar?`)) return;
+
+  const usuario = getAlias(usuarioActual.id) || usuarioActual.nombre;
+  const snap = { periodo:p, filas:inf.filas, categorias:inf.categorias, ranking:inf.ranking, motivos:inf.motivos, totales:inf.totales };
+  const existente = kxCierre(p);
+  const hist = existente ? (existente.historial||[]) : [];
+  hist.push({accion:'cierre', usuario, fecha:new Date().toISOString(), motivo:''});
+  const registro = { id:'CIE-'+p, periodo:p, estado:'cerrado', fechaCierre:new Date().toISOString(), usuario, informe:snap, historial:hist, _ts:Date.now() };
+  if(existente) DB.cierresMP = DB.cierresMP.map(c=>c.periodo===p ? registro : c);
+  else DB.cierresMP.push(registro);
+  try{ encolarCambio('cierresMP','upsert',{id:registro.id}); }catch(_){}
+  registrarAuditoria('Modificación', `Cierre MP ${p}`,
+    `Mes cerrado · Consumo real ${fmt$(inf.totales.realV)} · Pérdida ${fmt$(inf.totales.perdV)} (${inf.totales.mermaPct.toFixed(1)}%)`);
+  kxArchivarViejos();
+  toast(`🔒 ${kxMesNombre(p)} cerrado`,'success');
+  kxRenderCierres();
+}
+
+// Conserva el detalle de los últimos meses cerrados; lo anterior se descarga en CSV y se quita
+// del navegador (el resumen de cada mes queda guardado en el cierre para siempre).
+function kxArchivarViejos(){
+  const cerrados = (DB.cierresMP||[]).filter(c=>c.estado==='cerrado').map(c=>c.periodo).sort();
+  if(cerrados.length <= KX_ARCHIVO_MESES) return;
+  const limite = cerrados[cerrados.length - KX_ARCHIVO_MESES];
+  const viejos = (DB.movimientosMP||[]).filter(m=>{ const p=(m.f||'').slice(0,7); return p < limite && kxPeriodoCerrado(p); });
+  if(!viejos.length) return;
+  const filas = [['ID','Fecha','Cód. insumo','Insumo','Tipo','Origen','Motivo','Cantidad','Costo unit.','Stock resultante','Referencia','Nota','Usuario']];
+  viejos.forEach(m=>filas.push([m.id,m.f,m.ins,m.ds,m.tipo,KX_ORIGEN[m.org]||m.org,m.mot,m.d,m.cu,m.sd,m.ref,m.nota,m.u]));
+  descargarCSV(filas, `Kardex_archivo_hasta_${kxMesAnterior(limite)}.csv`);
+  // Marcar los meses archivados para que el sync no los vuelva a bajar
+  const periodos = new Set(viejos.map(m=>(m.f||'').slice(0,7)));
+  DB.cierresMP.forEach(c=>{ if(periodos.has(c.periodo)){ c.detalleArchivado = true; c._ts = Date.now(); } });
+  DB.cierresMP = DB.cierresMP.slice();
+  const ids = new Set(viejos.map(m=>m.id));
+  DB.movimientosMP = DB.movimientosMP.filter(m=>!ids.has(m.id));
+  registrarAuditoria('Sincronización','Kardex archivo',`${viejos.length} movimientos anteriores a ${limite} archivados en CSV (el resumen de cada mes se conserva)`);
+  toast(`📦 ${viejos.length} movimientos viejos archivados en CSV para liberar espacio`,'success');
+}
+
+// Después de cada sincronización (v32: sincronizarNube y pullSilencioso),
+// quitar del navegador el detalle de los meses ya archivados que la nube devuelve.
+function kxPurgarArchivados(){
+  const arch = new Set((DB.cierresMP||[]).filter(c=>c.detalleArchivado && c.estado==='cerrado').map(c=>c.periodo));
+  if(!arch.size) return;
+  const antes = (DB.movimientosMP||[]).length;
+  const quedan = (DB.movimientosMP||[]).filter(m=>!arch.has((m.f||'').slice(0,7)));
+  if(quedan.length !== antes) DB.movimientosMP = quedan;
+}
+['sincronizarNube','pullSilencioso'].forEach(nombre=>{
+  const orig = window[nombre];
+  if(typeof orig !== 'function') return;
+  window[nombre] = async function(...args){
+    const r = await orig.apply(this, args);
+    try{ kxPurgarArchivados(); }catch(e){ console.warn(e); }
+    return r;
+  };
+});
+
+// Número de versión visible
+(function(){
+  document.title = document.title.replace(/v\d+/, 'v33');
+  document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+$/.test(d.textContent.trim())) d.textContent = 'v33'; });
+})();
+
+function kxReabrirMes(p){
+  if(!kxEsAdmin()){ toast('🔒 Solo Dueño o Administrador pueden reabrir un mes','error'); return; }
+  const c = kxCierre(p);
+  if(!c || c.estado!=='cerrado') return;
+  const motivo = prompt(`⚠️ Reabrir ${kxMesNombre(p)}\n\nEs una excepción: el informe que ya presentaste puede cambiar.\nLo recomendado es corregir con un ajuste en el mes actual.\n\nEscribí el motivo de la reapertura (queda en Auditoría):`);
+  if(!motivo || !motivo.trim()){ toast('Reapertura cancelada','error'); return; }
+  const usuario = getAlias(usuarioActual.id) || usuarioActual.nombre;
+  c.estado = 'reabierto';
+  c.historial = c.historial || [];
+  c.historial.push({accion:'reapertura', usuario, fecha:new Date().toISOString(), motivo:motivo.trim()});
+  c._ts = Date.now();
+  DB.cierresMP = DB.cierresMP.slice();   // fuerza el guardado
+  try{ encolarCambio('cierresMP','upsert',{id:c.id}); }catch(_){}
+  registrarAuditoria('Modificación', `Cierre MP ${p}`, `MES REABIERTO por ${usuario}. Motivo: "${motivo.trim()}"`);
+  toast(`🔓 ${kxMesNombre(p)} reabierto`,'success');
+  kxRenderCierres();
+}
+
+function kxRenderCierres(){
+  const tbody = document.getElementById('kx-tbl-cierres');
+  if(!tbody) return;
+  const lista = (DB.cierresMP||[]).slice().sort((a,b)=>b.periodo.localeCompare(a.periodo));
+  if(!lista.length){
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="es-icon">🔒</div><h4>Todavía no hay meses cerrados</h4><p>Cuando termine el mes, cerralo desde arriba para congelar el informe.</p></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = lista.map(c=>{
+    const T = (c.informe && c.informe.totales) || {};
+    const hist = (c.historial||[]).map(h=>`${h.accion==='cierre'?'🔒':'🔓'} ${kxFechaFmt((h.fecha||'').slice(0,10))} ${kxEsc(h.usuario)}${h.motivo?' — '+kxEsc(h.motivo):''}`).join('<br>');
+    return `<tr>
+      <td><strong>${kxMesNombre(c.periodo)}</strong></td>
+      <td>${c.estado==='cerrado'?'<span class="badge badge-ok">🔒 Cerrado</span>':'<span class="badge badge-pend">🔓 Reabierto</span>'}</td>
+      <td>${fmt$(T.realV||0)}</td><td class="kx-neg">${fmt$(T.perdV||0)}</td><td>${(T.mermaPct||0).toFixed(1)}%</td>
+      <td style="font-size:12px">${kxEsc(c.usuario)}<br><span style="color:var(--texto-2)">${kxFechaFmt((c.fechaCierre||'').slice(0,10))}</span></td>
+      <td style="font-size:11px;color:var(--texto-2)">${hist}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-secondary" style="padding:5px 10px;font-size:11px" onclick="document.getElementById('kx-inf-mes').value='${c.periodo}';kxTab('informe')">📊 Ver</button>
+        ${c.estado==='cerrado' && kxEsAdmin() ? `<button class="btn-danger" onclick="kxReabrirMes('${c.periodo}')">🔓 Reabrir</button>` : ''}
+        ${c.estado!=='cerrado' && kxEsAdmin() ? `<button class="btn-primary" style="padding:5px 10px;font-size:11px" onclick="document.getElementById('kx-cierre-mes').value='${c.periodo}';kxCerrarMes()">🔒 Cerrar</button>` : ''}
+      </td></tr>`;
+  }).join('');
+}
+</script>
+<!-- ══════════════════ FIN MÓDULO v33 ══════════════════ -->
+
 </body>
 </html>
