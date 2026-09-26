@@ -17409,7 +17409,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '34.1';
+const BELEN_BUILD = '34.2';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -19202,6 +19202,161 @@ function kxMpEjecutar(){
     }catch(_){}
     return res;
   };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v34.2 — PLANILLA DIARIA DEL EQUIPO (lo que elaboramos)
+// Pensada como registro del equipo para planificar, no como control.
+// ═══════════════════════════════════════════════════════════════
+function ppProductos(sector){
+  return (DB.catalogoProductos||[]).filter(p=>p && p.sector===sector && p.estado!=='Inactivo' && p.estado!=='Descontinuado' && p.origen!=='Tercerizado')
+    .sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es'));
+}
+function ppSectores(){ return SECTORES_CATALOGO.map(s=>({ ...s, n: ppProductos(s.nombre).length })).filter(s=>s.n>0); }
+function ppCfg(){ try{ return JSON.parse(localStorage.getItem('planilla_prod_cfg')||'{}'); }catch(_){ return {}; } }
+function ppAbrir(){
+  let m = document.getElementById('modal-pp');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='modal-pp';
+    m.innerHTML = `<div class="modal" style="max-width:560px">
+      <div class="modal-header"><span>📝</span><h2>Planilla del equipo — lo que elaboramos</h2>
+        <button class="modal-close" onclick="cerrarModal('modal-pp')">✕</button></div>
+      <div class="modal-body" id="pp-body"></div>
+      <div class="modal-footer"><button class="btn-secondary" onclick="cerrarModal('modal-pp')">Cancelar</button>
+        <button class="btn-primary" onclick="ppImprimir()">🖨️ Generar planilla</button></div></div>`;
+    document.body.appendChild(m);
+  }
+  const cfg = ppCfg(), secs = ppSectores(), marc = cfg.sectores || secs.map(s=>s.nombre);
+  document.getElementById('pp-body').innerHTML = secs.length ? `
+    <p style="font-size:13px;margin:0 0 12px">Una hoja por sector con los productos de <strong>elaboración propia</strong> del catálogo. Sirve para que el equipo anote lo que elaboró y lo que necesita.</p>
+    <label style="font-size:11px;font-weight:700">SECTORES</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 14px">
+      ${secs.map(s=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:7px 10px;cursor:pointer">
+        <input type="checkbox" class="pp-sec" value="${kxEsc(s.nombre)}" ${marc.includes(s.nombre)?'checked':''}> ${s.icono} ${kxEsc(s.nombre)} <span style="opacity:.6;margin-left:auto">${s.n}</span></label>`).join('')}
+    </div>
+    <label style="font-size:11px;font-weight:700">FORMATO</label>
+    <div style="display:flex;gap:8px;margin:6px 0 14px">
+      <label style="flex:1;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer"><input type="radio" name="pp-fmt" value="dia" ${cfg.fmt!=='semana'?'checked':''}> 📅 <strong>Un día</strong> por hoja</label>
+      <label style="flex:1;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer"><input type="radio" name="pp-fmt" value="semana" ${cfg.fmt==='semana'?'checked':''}> 🗓️ <strong>Semana</strong> (lunes a sábado)</label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label style="font-size:11px;font-weight:700">FECHA (opcional)</label><input type="date" id="pp-fecha" style="width:100%">
+        <div style="font-size:11px;opacity:.7;margin-top:3px">Vacía = se completa a mano</div></div>
+      <div><label style="font-size:11px;font-weight:700">RENGLONES LIBRES</label><input type="number" id="pp-libres" min="0" max="20" value="${cfg.libres!=null?cfg.libres:4}" style="width:100%">
+        <div style="font-size:11px;opacity:.7;margin-top:3px">Para productos que no están en la lista</div></div>
+    </div>` : `<p style="font-size:13px">No hay productos de elaboración propia en el catálogo. Cargalos en <strong>Productos por Sector</strong>.</p>`;
+  m.classList.add('open');
+}
+function ppFechaTxt(iso){
+  if(!iso) return '';
+  const d = new Date(iso+'T12:00:00');
+  return d.toLocaleDateString('es-AR',{weekday:'long', day:'numeric', month:'long', year:'numeric'});
+}
+function ppImprimir(){
+  const sectores = [...document.querySelectorAll('.pp-sec:checked')].map(x=>x.value);
+  if(!sectores.length){ toast('⚠️ Elegí al menos un sector','error'); return; }
+  const fmt = document.querySelector('input[name=pp-fmt]:checked')?.value || 'dia';
+  const fecha = document.getElementById('pp-fecha').value;
+  const libres = Math.max(0, Math.min(20, parseInt(document.getElementById('pp-libres').value)||0));
+  try{ localStorage.setItem('planilla_prod_cfg', JSON.stringify({sectores, fmt, libres})); }catch(_){}
+  const html = ppHtml(sectores, fmt, fecha, libres);
+  cerrarModal('modal-pp');
+  const w = window.open('','_blank');
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); }
+  else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html],{type:'text/html'}));
+    a.download = `Planilla_produccion_${fmt}_${fecha||kxHoy()}.html`; a.click();
+    toast('📥 Se descargó la planilla: abrila y usá Ctrl+P','success');
+  }
+}
+function ppHtml(sectores, fmt, fecha, libres){
+  const E = kxEsc, dias = ['Lun','Mar','Mié','Jue','Vie','Sáb'];
+  let fechaTxt = '';
+  if(fecha && fmt==='dia') fechaTxt = ppFechaTxt(fecha);
+  if(fecha && fmt==='semana'){
+    const d = new Date(fecha+'T12:00:00'); const lun = new Date(d); lun.setDate(d.getDate() - ((d.getDay()+6)%7));
+    const sab = new Date(lun); sab.setDate(lun.getDate()+5);
+    const f = x=>x.toLocaleDateString('es-AR',{day:'numeric',month:'long'});
+    fechaTxt = `Semana del ${f(lun)} al ${f(sab)} de ${sab.getFullYear()}`;
+  }
+  const lineaFecha = fechaTxt ? `<span class="fecha">${E(fechaTxt.charAt(0).toUpperCase()+fechaTxt.slice(1))}</span>`
+    : (fmt==='dia' ? `Día: ____________ &nbsp; Fecha: ____/____/______` : `Semana del ____/____ al ____/____/______`);
+  const hojas = sectores.map(sec=>{
+    const s = SECTORES_CATALOGO.find(x=>x.nombre===sec) || {icono:'🥐'};
+    const prods = ppProductos(sec);
+    const filasProd = prods.map(p=> fmt==='dia'
+      ? `<tr><td class="prod">${E(p.nombre)}</td><td class="u">${E(p.uom||'')}</td><td class="cant"></td><td class="nota"></td></tr>`
+      : `<tr><td class="prod">${E(p.nombre)}</td><td class="u">${E(p.uom||'')}</td>${dias.map(()=>'<td class="d"></td>').join('')}</tr>`).join('');
+    const filasLibres = Array.from({length:libres}, ()=> fmt==='dia'
+      ? `<tr class="libre"><td class="prod"></td><td class="u"></td><td class="cant"></td><td class="nota"></td></tr>`
+      : `<tr class="libre"><td class="prod"></td><td class="u"></td>${dias.map(()=>'<td class="d"></td>').join('')}</tr>`).join('');
+    const cab = fmt==='dia'
+      ? `<tr><th>Producto</th><th class="u">Unidad</th><th class="cant">¿Cuánto hicimos?</th><th>Notas <span class="tip">(salió más, faltó algo, quedó para mañana…)</span></th></tr>`
+      : `<tr><th>Producto</th><th class="u">Unidad</th>${dias.map(d=>`<th class="d">${d}</th>`).join('')}</tr>`;
+    return `<section class="hoja">
+      <header>
+        <div class="marca">🥐 Panadería Belén</div>
+        <h1>${s.icono} Lo que elaboramos ${fmt==='dia'?'hoy':'esta semana'} — ${E(sec)}</h1>
+        <div class="linea">${lineaFecha}</div>
+        <div class="linea">Equipo ${fmt==='dia'?'del día':'de la semana'}: _____________________________________________</div>
+        <p class="intro">Anotar lo que se elabora nos ayuda a saber cuánto producimos, planificar las compras y que no falte nada. <strong>¡Gracias por tomarse un minuto!</strong></p>
+      </header>
+      <table>${cab}${filasProd}${libres?`<tr><td colspan="${fmt==='dia'?4:8}" class="sep">Otros productos que hicimos</td></tr>`+filasLibres:''}</table>
+      <div class="pie">
+        <div class="caja"><div class="t">🛒 Insumos que se están terminando</div></div>
+        <div class="caja"><div class="t">🔧 Algo que no anduvo bien<span class="tip"> (horno, máquina, herramienta…)</span></div></div>
+        <div class="caja"><div class="t">💡 Ideas o sugerencias</div></div>
+      </div>
+    </section>`;
+  }).join('');
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Planilla de producción — Panadería Belén</title>
+  <style>
+    @page{size:A4 portrait;margin:11mm}
+    *{box-sizing:border-box}
+    body{font-family:Arial,Helvetica,sans-serif;color:#2B1B10;margin:0;padding:16px;font-size:12px;background:#fff}
+    .hoja{page-break-after:always;max-width:780px;margin:0 auto 30px}
+    .hoja:last-child{page-break-after:auto}
+    header{border:2px solid #C8923A;border-radius:12px;padding:10px 14px;margin-bottom:10px;background:#FFF8EC}
+    .marca{font-size:11px;color:#9A6A2A;font-weight:bold;letter-spacing:.5px;text-transform:uppercase}
+    h1{font-size:19px;margin:3px 0 6px;color:#4A2C17}
+    .linea{font-size:12.5px;margin:4px 0}
+    .fecha{font-weight:bold;font-size:13px}
+    .intro{font-size:11px;color:#6B5240;margin:7px 0 0;line-height:1.4}
+    table{width:100%;border-collapse:collapse}
+    tr{page-break-inside:avoid}
+    th{background:#F3E3C4;color:#4A2C17;font-size:10.5px;text-align:left;padding:6px 7px;border:1px solid #D9C4A0}
+    td{border:1px solid #D9C4A0;padding:0 7px;height:27px;font-size:12.5px}
+    tr:nth-child(even) td{background:#FFFCF6}
+    td.prod{font-weight:bold}
+    th.u,td.u{width:58px;text-align:center;font-size:11px;font-weight:normal;color:#6B5240}
+    th.cant,td.cant{width:120px}
+    th.d,td.d{width:58px;text-align:center}
+    .tip{font-weight:normal;color:#8A7260;font-size:9.5px}
+    td.sep{background:#F8EFDD!important;font-size:10.5px;font-weight:bold;color:#6B5240;height:22px}
+    tr.libre td{height:27px}
+    .pie{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
+    .caja{border:1.5px dashed #C8923A;border-radius:10px;min-height:92px;padding:6px 8px}
+    .caja .t{font-size:11px;font-weight:bold;color:#6B5240}
+    .aviso{max-width:780px;margin:0 auto 14px;padding:10px 14px;background:#EEF6EE;border-radius:8px;font-size:12px}
+    @media print{body{padding:0}.aviso{display:none}.hoja{margin:0}}
+  </style></head>
+  <body onload="setTimeout(()=>window.print(),300)">
+  <div class="aviso">🖨️ Si no se abre la ventana de impresión, usá <strong>Ctrl+P</strong>. Cada sector sale en una hoja aparte.</div>
+  ${hojas}
+  </body></html>`;
+}
+(function(){
+  const ins = ()=>{
+    const pg = document.getElementById('page-produccion'); if(!pg || document.getElementById('pp-btn')) return;
+    const ref = [...pg.querySelectorAll('button')].find(b=>(b.getAttribute('onclick')||'').includes('generarListaCompras'));
+    if(!ref) return;
+    const b = document.createElement('button'); b.id='pp-btn'; b.className='btn-secondary'; b.textContent='📝 Planilla del equipo';
+    b.onclick = ppAbrir; ref.parentNode.insertBefore(b, ref.nextSibling);
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ins); else ins();
 })();
 
 </script>
