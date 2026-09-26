@@ -17409,7 +17409,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '34.2';
+const BELEN_BUILD = '34.3';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -19229,13 +19229,19 @@ function ppAbrir(){
     document.body.appendChild(m);
   }
   const cfg = ppCfg(), secs = ppSectores(), marc = cfg.sectores || secs.map(s=>s.nombre);
-  document.getElementById('pp-body').innerHTML = secs.length ? `
-    <p style="font-size:13px;margin:0 0 12px">Una hoja por sector con los productos de <strong>elaboración propia</strong> del catálogo. Sirve para que el equipo anote lo que elaboró y lo que necesita.</p>
+  const blanco = cfg.cont==='blanco' || !secs.length;
+  document.getElementById('pp-body').innerHTML = `
+    <label style="font-size:11px;font-weight:700">CONTENIDO</label>
+    <div style="display:flex;gap:8px;margin:6px 0 14px">
+      <label style="flex:1;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer"><input type="radio" name="pp-cont" value="blanco" ${blanco?'checked':''} onchange="ppCont()"> ✏️ <strong>Toda en blanco</strong><br><span style="font-size:11px;opacity:.7">Cada uno escribe lo que hizo</span></label>
+      <label style="flex:1;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;${secs.length?'':'opacity:.5'}"><input type="radio" name="pp-cont" value="catalogo" ${!blanco?'checked':''} ${secs.length?'':'disabled'} onchange="ppCont()"> 📋 <strong>Con productos</strong><br><span style="font-size:11px;opacity:.7">${secs.length?'Del catálogo, una hoja por sector':'No hay productos cargados'}</span></label>
+    </div>
+    <div id="pp-secs-wrap" style="${blanco?'display:none':''}">
     <label style="font-size:11px;font-weight:700">SECTORES</label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 14px">
       ${secs.map(s=>`<label style="display:flex;gap:8px;align-items:center;font-size:13px;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:7px 10px;cursor:pointer">
         <input type="checkbox" class="pp-sec" value="${kxEsc(s.nombre)}" ${marc.includes(s.nombre)?'checked':''}> ${s.icono} ${kxEsc(s.nombre)} <span style="opacity:.6;margin-left:auto">${s.n}</span></label>`).join('')}
-    </div>
+    </div></div>
     <label style="font-size:11px;font-weight:700">FORMATO</label>
     <div style="display:flex;gap:8px;margin:6px 0 14px">
       <label style="flex:1;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer"><input type="radio" name="pp-fmt" value="dia" ${cfg.fmt!=='semana'?'checked':''}> 📅 <strong>Un día</strong> por hoja</label>
@@ -19244,10 +19250,18 @@ function ppAbrir(){
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label style="font-size:11px;font-weight:700">FECHA (opcional)</label><input type="date" id="pp-fecha" style="width:100%">
         <div style="font-size:11px;opacity:.7;margin-top:3px">Vacía = se completa a mano</div></div>
-      <div><label style="font-size:11px;font-weight:700">RENGLONES LIBRES</label><input type="number" id="pp-libres" min="0" max="20" value="${cfg.libres!=null?cfg.libres:4}" style="width:100%">
+      <div id="pp-libres-wrap" style="${blanco?'display:none':''}"><label style="font-size:11px;font-weight:700">RENGLONES LIBRES</label><input type="number" id="pp-libres" min="0" max="20" value="${cfg.libres!=null?cfg.libres:4}" style="width:100%">
         <div style="font-size:11px;opacity:.7;margin-top:3px">Para productos que no están en la lista</div></div>
-    </div>` : `<p style="font-size:13px">No hay productos de elaboración propia en el catálogo. Cargalos en <strong>Productos por Sector</strong>.</p>`;
+      <div id="pp-copias-wrap" style="${blanco?'':'display:none'}"><label style="font-size:11px;font-weight:700">CANTIDAD DE HOJAS</label><input type="number" id="pp-copias" min="1" max="30" value="${cfg.copias||1}" style="width:100%">
+        <div style="font-size:11px;opacity:.7;margin-top:3px">Por ejemplo, una por sector o por persona</div></div>
+    </div>`;
   m.classList.add('open');
+}
+function ppCont(){
+  const b = document.querySelector('input[name=pp-cont]:checked')?.value==='blanco';
+  document.getElementById('pp-secs-wrap').style.display = b ? 'none' : '';
+  document.getElementById('pp-libres-wrap').style.display = b ? 'none' : '';
+  document.getElementById('pp-copias-wrap').style.display = b ? '' : 'none';
 }
 function ppFechaTxt(iso){
   if(!iso) return '';
@@ -19255,13 +19269,16 @@ function ppFechaTxt(iso){
   return d.toLocaleDateString('es-AR',{weekday:'long', day:'numeric', month:'long', year:'numeric'});
 }
 function ppImprimir(){
+  const cont = document.querySelector('input[name=pp-cont]:checked')?.value || 'blanco';
   const sectores = [...document.querySelectorAll('.pp-sec:checked')].map(x=>x.value);
-  if(!sectores.length){ toast('⚠️ Elegí al menos un sector','error'); return; }
+  if(cont==='catalogo' && !sectores.length){ toast('⚠️ Elegí al menos un sector','error'); return; }
   const fmt = document.querySelector('input[name=pp-fmt]:checked')?.value || 'dia';
   const fecha = document.getElementById('pp-fecha').value;
   const libres = Math.max(0, Math.min(20, parseInt(document.getElementById('pp-libres').value)||0));
-  try{ localStorage.setItem('planilla_prod_cfg', JSON.stringify({sectores, fmt, libres})); }catch(_){}
-  const html = ppHtml(sectores, fmt, fecha, libres);
+  const copias = Math.max(1, Math.min(30, parseInt(document.getElementById('pp-copias').value)||1));
+  const prev = ppCfg();
+  try{ localStorage.setItem('planilla_prod_cfg', JSON.stringify({sectores: cont==='catalogo'?sectores:(prev.sectores||sectores), fmt, libres, cont, copias})); }catch(_){}
+  const html = cont==='blanco' ? ppHtml(null, fmt, fecha, 0, copias) : ppHtml(sectores, fmt, fecha, libres);
   cerrarModal('modal-pp');
   const w = window.open('','_blank');
   if(w){ w.document.open(); w.document.write(html); w.document.close(); }
@@ -19272,7 +19289,7 @@ function ppImprimir(){
     toast('📥 Se descargó la planilla: abrila y usá Ctrl+P','success');
   }
 }
-function ppHtml(sectores, fmt, fecha, libres){
+function ppHtml(sectores, fmt, fecha, libres, copias){
   const E = kxEsc, dias = ['Lun','Mar','Mié','Jue','Vie','Sáb'];
   let fechaTxt = '';
   if(fecha && fmt==='dia') fechaTxt = ppFechaTxt(fecha);
@@ -19284,9 +19301,12 @@ function ppHtml(sectores, fmt, fecha, libres){
   }
   const lineaFecha = fechaTxt ? `<span class="fecha">${E(fechaTxt.charAt(0).toUpperCase()+fechaTxt.slice(1))}</span>`
     : (fmt==='dia' ? `Día: ____________ &nbsp; Fecha: ____/____/______` : `Semana del ____/____ al ____/____/______`);
-  const hojas = sectores.map(sec=>{
-    const s = SECTORES_CATALOGO.find(x=>x.nombre===sec) || {icono:'🥐'};
-    const prods = ppProductos(sec);
+  const enBlanco = !sectores;
+  const lista = enBlanco ? Array.from({length:copias||1}, ()=>null) : sectores;
+  const hojas = lista.map(sec=>{
+    const s = enBlanco ? {icono:'🥐'} : (SECTORES_CATALOGO.find(x=>x.nombre===sec) || {icono:'🥐'});
+    const prods = enBlanco ? [] : ppProductos(sec);
+    if(enBlanco) libres = 27;
     const filasProd = prods.map(p=> fmt==='dia'
       ? `<tr><td class="prod">${E(p.nombre)}</td><td class="u">${E(p.uom||'')}</td><td class="cant"></td><td class="nota"></td></tr>`
       : `<tr><td class="prod">${E(p.nombre)}</td><td class="u">${E(p.uom||'')}</td>${dias.map(()=>'<td class="d"></td>').join('')}</tr>`).join('');
@@ -19299,12 +19319,13 @@ function ppHtml(sectores, fmt, fecha, libres){
     return `<section class="hoja">
       <header>
         <div class="marca">🥐 Panadería Belén</div>
-        <h1>${s.icono} Lo que elaboramos ${fmt==='dia'?'hoy':'esta semana'} — ${E(sec)}</h1>
+        <h1>${s.icono} Lo que elaboramos ${fmt==='dia'?'hoy':'esta semana'}${enBlanco?'':' — '+E(sec)}</h1>
         <div class="linea">${lineaFecha}</div>
+        ${enBlanco?`<div class="linea">Sector: ______________________________</div>`:''}
         <div class="linea">Equipo ${fmt==='dia'?'del día':'de la semana'}: _____________________________________________</div>
         <p class="intro">Anotar lo que se elabora nos ayuda a saber cuánto producimos, planificar las compras y que no falte nada. <strong>¡Gracias por tomarse un minuto!</strong></p>
       </header>
-      <table>${cab}${filasProd}${libres?`<tr><td colspan="${fmt==='dia'?4:8}" class="sep">Otros productos que hicimos</td></tr>`+filasLibres:''}</table>
+      <table class="${enBlanco&&fmt==='dia'?'blanco':''}">${cab}${filasProd}${libres&&!enBlanco?`<tr><td colspan="${fmt==='dia'?4:8}" class="sep">Otros productos que hicimos</td></tr>`:''}${filasLibres}</table>
       <div class="pie">
         <div class="caja"><div class="t">🛒 Insumos que se están terminando</div></div>
         <div class="caja"><div class="t">🔧 Algo que no anduvo bien<span class="tip"> (horno, máquina, herramienta…)</span></div></div>
@@ -19331,6 +19352,7 @@ function ppHtml(sectores, fmt, fecha, libres){
     td{border:1px solid #D9C4A0;padding:0 7px;height:27px;font-size:12.5px}
     tr:nth-child(even) td{background:#FFFCF6}
     td.prod{font-weight:bold}
+    table.blanco th:first-child{width:36%}
     th.u,td.u{width:58px;text-align:center;font-size:11px;font-weight:normal;color:#6B5240}
     th.cant,td.cant{width:120px}
     th.d,td.d{width:58px;text-align:center}
@@ -19344,7 +19366,7 @@ function ppHtml(sectores, fmt, fecha, libres){
     @media print{body{padding:0}.aviso{display:none}.hoja{margin:0}}
   </style></head>
   <body onload="setTimeout(()=>window.print(),300)">
-  <div class="aviso">🖨️ Si no se abre la ventana de impresión, usá <strong>Ctrl+P</strong>. Cada sector sale en una hoja aparte.</div>
+  <div class="aviso">🖨️ Si no se abre la ventana de impresión, usá <strong>Ctrl+P</strong>. ${enBlanco?'Podés imprimir varias copias desde ahí.':'Cada sector sale en una hoja aparte.'}</div>
   ${hojas}
   </body></html>`;
 }
