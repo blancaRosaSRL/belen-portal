@@ -15761,6 +15761,14 @@ window.addEventListener('DOMContentLoaded', ()=>{
       if(siguiente.has(k)){ const nv = siguiente.get(k); siguiente.delete(k); escribir(k, nv); }
     });
   }
+  window.kxIdbReleer = (claves)=>new Promise(res=>{
+    if(!db){ res(false); return; }
+    try{
+      const t = db.transaction(IDB_STORE,'readonly'), st = t.objectStore(IDB_STORE);
+      claves.forEach(k=>{ const q = st.get(k); q.onsuccess = ()=>{ if(!siguiente.has(k) && !enCurso.has(k)){ if(q.result==null) mem.delete(k); else mem.set(k, q.result); } }; });
+      t.oncomplete = ()=>res(true); t.onerror = t.onabort = ()=>res(false);
+    }catch(e){ res(false); }
+  });
   window.kxIdbFlush = async ()=>{ while(pendientes.length || siguiente.size){ await Promise.all(pendientes.slice()); await new Promise(r=>setTimeout(r,0)); } };
 
   SP.getItem = function(k){
@@ -17401,7 +17409,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '33.8';
+const BELEN_BUILD = '33.9';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -18495,5 +18503,102 @@ const GRF_PAGINAS = { dashboard:grfDashboard, inventario:grfInventario, materia:
   @media print{ .grf-item{break-inside:avoid} }
 </style>
 
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// v33.9 — VENTANAS SINCRONIZADAS
+// Si la app está abierta en varias pestañas o ventanas de la misma PC:
+//  • Solo guarda la ventana que se está usando (la última que se tocó).
+//  • Las demás reciben cada cambio al instante y se redibujan.
+//  • Al tocar otra ventana, primero se pone al día y recién ahí pasa a guardar.
+// Así una ventana con datos viejos nunca pisa lo que se corrigió en la otra.
+// ═══════════════════════════════════════════════════════════════════
+(function(){
+  if(typeof BroadcastChannel==='undefined') return;
+  const canal = new BroadcastChannel('belen-ventanas');
+  const yo = Math.random().toString(36).slice(2);
+  const LK = 'belen_ventana_activa';          // localStorage real (no se redirige a IndexedDB)
+  let aplicando = false, tAviso = null, tRecarga = null, renderPendiente = false, poniendoAlDia = null;
+  const soyActiva = ()=>{ try{ return localStorage.getItem(LK) === yo; }catch(_){ return true; } };
+  window.kxVentanaActiva = soyActiva;
+  function paginaActiva(){ const p = document.querySelector('.page.active'); return p ? p.id.replace('page-','') : null; }
+  function ocupado(){
+    if(document.querySelector('.modal-overlay.open')) return true;
+    const a = document.activeElement;
+    return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest('.page, .modal-overlay'));
+  }
+  function redibujar(){
+    const pid = paginaActiva();
+    if(!pid || !usuarioActual) return;
+    if(ocupado()){ renderPendiente = true; return; }
+    renderPendiente = false;
+    const main = document.querySelector('.main'); const ym = main ? main.scrollTop : 0, y = window.scrollY||0;
+    try{ showPage(pid, document.querySelector('.nav-btn.active')); }catch(e){ console.warn('Redibujar:', e); }
+    try{ if(main) main.scrollTop = ym; if(window.scrollTo) window.scrollTo(0, y); }catch(_){}
+  }
+  async function ponerseAlDia(redib){
+    if(!window.kxIdbReleer) return;
+    await window.kxIdbReleer([LS_KEY, 'belen_sync_queue']);
+    aplicando = true;
+    try{ cargarDesdeStorage(); cargarQueue(); try{ actualizarBadgeSync(); }catch(_){} }
+    finally{ aplicando = false; }
+    try{ kxRefrescarReponer(); }catch(_){}
+    if(redib) redibujar();
+  }
+  // Tomar el control: al tocar, escribir o volver a esta ventana
+  function tomarControl(){
+    if(soyActiva()) return;
+    try{ localStorage.setItem(LK, yo); }catch(_){}
+    poniendoAlDia = ponerseAlDia(false).catch(()=>{}).finally(()=>{ poniendoAlDia = null; });
+  }
+  try{ localStorage.setItem(LK, yo); }catch(_){}           // la última ventana abierta arranca como activa
+  ['pointerdown','keydown','focus'].forEach(ev=>window.addEventListener(ev, tomarControl, true));
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && document.hasFocus && document.hasFocus()) tomarControl(); });
+
+  // Guardar: solo la ventana activa escribe en disco y avisa a las demás
+  const origGuardar = window.guardarEnStorage;
+  window.guardarEnStorage = function(){
+    if(aplicando) return;                                  // estamos cargando lo de otra ventana
+    if(!soyActiva()) return;                               // ventana en segundo plano: no pisa datos
+    const r = origGuardar.apply(this, arguments);
+    clearTimeout(tAviso);
+    tAviso = setTimeout(async ()=>{
+      try{ if(window.kxIdbFlush) await window.kxIdbFlush(); }catch(_){}
+      canal.postMessage({t:'guardado', de:yo});
+    }, 450);                                               // el guardado real se hace a los 300 ms
+    return r;
+  };
+  const origGQ = window.guardarQueue;
+  window.guardarQueue = function(){ if(aplicando || !soyActiva()) return; return origGQ.apply(this, arguments); };
+  // La sincronización con la nube la hace solo la ventana activa
+  ['sincronizarNube','pullSilencioso'].forEach(fn=>{
+    const o = window[fn]; if(typeof o!=='function') return;
+    window[fn] = async function(){ if(!soyActiva()) return; if(poniendoAlDia) await poniendoAlDia; return o.apply(this, arguments); };
+  });
+  canal.onmessage = ev=>{
+    const m = ev.data || {};
+    if(m.de === yo || m.t!=='guardado') return;
+    clearTimeout(tRecarga);
+    tRecarga = setTimeout(()=>{ ponerseAlDia(true).catch(e=>console.warn('Sincronizar ventanas:', e)); }, 100);
+  };
+  // Si quedó un redibujo pendiente (formulario abierto o escribiendo), hacerlo al terminar
+  document.addEventListener('focusout', ()=>setTimeout(()=>{ if(renderPendiente && !ocupado()) redibujar(); }, 300));
+  document.addEventListener('click', ()=>setTimeout(()=>{ if(renderPendiente && !ocupado()) redibujar(); }, 400));
+})();
+// En la misma ventana: si se corrige stock desde un formulario mientras Stock Actual está a la vista, redibujarla
+(function(){
+  let firma = '';
+  const f = ()=>(DB.inventario||[]).map(i=>i.id+':'+i.stock+':'+i.min+':'+(i.estado||'')).join('|');
+  const orig = window.kxRefrescarReponer;
+  window.kxRefrescarReponer = function(){
+    const r = orig.apply(this, arguments);
+    try{
+      const nf = f();
+      if(nf !== firma){ const antes = firma; firma = nf;
+        if(antes && document.getElementById('page-inventario')?.classList.contains('active') && !document.querySelector('.modal-overlay.open')) renderInventario(); }
+    }catch(_){}
+    return r;
+  };
+})();
+</script>
 </body>
 </html>
