@@ -14124,13 +14124,13 @@ async function sincronizarNube(silencioso=false){
 
       // Índices por ID
       const remotoIdx={}, localIdx={};
-      remoto.forEach(r=>{ const k=r.id||r.nro||r.legajo; if(k) remotoIdx[k]=r; });
-      local.forEach(r=>{  const k=r.id||r.nro||r.legajo; if(k) localIdx[k]=r;  });
+      remoto.forEach(r=>{ const k=kxClaveReg(col,r); if(k) remotoIdx[k]=r; });
+      local.forEach(r=>{  const k=kxClaveReg(col,r); if(k) localIdx[k]=r;  });
 
       const merged = new Map();
       // Registros remotos
       remoto.forEach(rRem=>{
-        const rid = rRem.id||rRem.nro||rRem.legajo;
+        const rid = kxClaveReg(col,rRem);
         const rLoc = localIdx[rid];
         if(!rLoc){ merged.set(rid,rRem); fusionados++; }
         else {
@@ -14145,7 +14145,7 @@ async function sincronizarNube(silencioso=false){
       });
       // Creaciones locales que no están en servidor
       local.forEach(rLoc=>{
-        const lid=rLoc.id||rLoc.nro||rLoc.legajo;
+        const lid=kxClaveReg(col,rLoc);
         if(!remotoIdx[lid]){ merged.set(lid,rLoc); fusionados++; }
       });
       // Sin ID (legacy)
@@ -14188,7 +14188,7 @@ async function sincronizarNube(silencioso=false){
       // el servidor procesaba la subida no viene en la respuesta y antes se perdía.
       CLOUD_SYNC_ARRAYS.forEach(col=>{
         if(!Array.isArray(dbFinal[col]) || dbFinal[col].length === 0) return;
-        const k = r=>r && (r.id||r.nro||r.legajo);
+        const k = r=>kxClaveReg(col, r);
         const local = Array.isArray(DB[col]) ? DB[col] : [];
         const m = new Map();
         dbFinal[col].forEach(r=>{ const id=k(r); if(id) m.set(id,r); });
@@ -14300,10 +14300,10 @@ async function pullSilencioso(){
     CLOUD_SYNC_ARRAYS.forEach(col=>{
       const local  = Array.isArray(DB[col]) ? DB[col] : [];
       const remoto = Array.isArray(dbServidor[col]) ? dbServidor[col] : [];
-      const localIds = new Set(local.map(r=>r.id||r.nro||r.legajo).filter(Boolean));
+      const localIds = new Set(local.map(r=>kxClaveReg(col,r)).filter(Boolean));
 
       remoto.forEach(rRem=>{
-        const rid = rRem.id||rRem.nro||rRem.legajo;
+        const rid = kxClaveReg(col,rRem);
         if(!rid) return;
         if(!localIds.has(rid)){
           // Registro nuevo que no tenemos → agregar
@@ -14311,7 +14311,7 @@ async function pullSilencioso(){
           hayNuevo = true;
         } else {
           // Registro que existe → comparar timestamp
-          const rLoc = local.find(r=>(r.id||r.nro||r.legajo)===rid);
+          const rLoc = local.find(r=>kxClaveReg(col,r)===rid);
           if(rLoc && (rRem._ts||0) > (rLoc._ts||0)){
             // El servidor tiene versión más nueva → actualizar
             Object.assign(rLoc, rRem);
@@ -16666,7 +16666,7 @@ function kxMigrarInventarioInicial(){
   try{
     const vistos = new Set(), cambiar = [];
     (DB.cierresMP||[]).forEach(c=>{ if(c.estado==='cerrado' && c.informe) (c.informe.filas||[]).forEach(f=>vistos.add(f.ins)); });
-    [...(DB.movimientosMP||[])].sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ts||0)-(b._ts||0)).forEach(m=>{
+    [...(DB.movimientosMP||[])].sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ord||a._ts||0)-(b._ord||b._ts||0)).forEach(m=>{
       if(m.org!=='conteo' && m.org!=='inicial') return;
       if(vistos.has(m.ins)) return;
       vistos.add(m.ins);
@@ -16868,7 +16868,7 @@ function kxValuarPeriodo(p){
   const porIns = {};
   (DB.movimientosMP||[]).forEach(m=>{ if((m.f||'').slice(0,7) <= p) (porIns[m.ins] = porIns[m.ins] || []).push(m); });
   Object.entries(porIns).forEach(([insId, lista])=>{
-    lista.sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ts||0)-(b._ts||0));
+    lista.sort((a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ord||a._ts||0)-(b._ord||b._ts||0));
     if(!lista.some(m=>(m.f||'').slice(0,7)===p)) return;
     let st = kxValEstadoInicial(), desde = '';
     const base = cierresConEstado.find(c=>c.informe.estadoVal[insId]);
@@ -17409,7 +17409,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '33.9';
+const BELEN_BUILD = '34.0';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -18153,9 +18153,23 @@ function kxClaveSinId(col, r){
   return (KX_PREF_SINID[col]||'SID')+'-'+kxHash(JSON.stringify(c));
 }
 // Asigna id a los registros que no tienen y elimina copias repetidas. Devuelve {col: eliminados}
+function kxClaveMP(r){ return 'MP-'+kxHash([r.fecha,r.id,r.lote,r.cantidad,r.sinIVA,r.conIVA,r.proveedor,r.vto,r.obs].map(x=>x==null?'':String(x)).join('|')); }
+function kxClaveReg(col, r){
+  if(!r || typeof r!=='object') return null;
+  if(col==='materiaPrima') return r.mpId || kxClaveMP(r);
+  return r.id || r.nro || r.legajo || null;
+}
 function kxNormalizarSinId(db){
   const stats = {};
   if(!db || typeof db!=='object') return stats;
+  // v34: cada ingreso de materia prima con su propio identificador (mpId)
+  if(Array.isArray(db.materiaPrima) && db.materiaPrima.some(r=>r && !r.mpId)){
+    const m = new Map();
+    db.materiaPrima.forEach(r=>{ if(!r || typeof r!=='object') return; if(!r.mpId) r.mpId = kxClaveMP(r);
+      const p = m.get(r.mpId); if(!p || (r._ts||0) > (p._ts||0)) m.set(r.mpId, r); });
+    const q = db.materiaPrima.length - m.size; if(q>0) stats.materiaPrima = q;
+    db.materiaPrima = [...m.values()];
+  }
   const cols = [...new Set([...(typeof CLOUD_SYNC_ARRAYS!=='undefined'?CLOUD_SYNC_ARRAYS:[]), ...(typeof LS_KEYS_ARRAYS!=='undefined'?LS_KEYS_ARRAYS:[])])];
   cols.forEach(col=>{
     const arr = db[col];
@@ -18599,6 +18613,437 @@ const GRF_PAGINAS = { dashboard:grfDashboard, inventario:grfInventario, materia:
     return r;
   };
 })();
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v34 — BORRADOS SINCRONIZADOS + UNIFICAR / ELIMINAR INSUMOS
+// ═══════════════════════════════════════════════════════════════
+(function(){
+  if(!LS_KEYS_ARRAYS.includes('eliminados')) LS_KEYS_ARRAYS.push('eliminados');
+  if(!CLOUD_SYNC_ARRAYS.includes('eliminados')) CLOUD_SYNC_ARRAYS.push('eliminados');
+  if(!Array.isArray(DB.eliminados)) DB.eliminados = [];
+})();
+// Colecciones cuyos borrados NO se registran (se recortan solas o las maneja el kardex)
+const KX_SIN_TUMBAS = new Set(['auditoria','eliminados','historialCostosRecetas','movimientosMP','cierresMP','configCargas']);
+
+function kxMapaTumbas(db){
+  const m = new Map();
+  ((db||DB).eliminados||[]).forEach(e=>{ if(!e||!e.col||!e.k) return;
+    if(!m.has(e.col)) m.set(e.col, new Map());
+    const c = m.get(e.col); c.set(e.k, Math.max(c.get(e.k)||0, e.ts||0)); });
+  return m;
+}
+// Quita de la base lo que tiene marca de eliminado (salvo que se haya vuelto a crear después)
+function kxAplicarEliminados(db){
+  db = db || DB; let n = 0;
+  const tumbas = kxMapaTumbas(db); if(!tumbas.size) return 0;
+  tumbas.forEach((t, col)=>{
+    if(!Array.isArray(db[col])) return;
+    const antes = db[col].length;
+    const quedan = db[col].filter(r=>{ const k = kxClaveReg(col, r); const ts = k && t.get(k); return !ts || (r._ts||0) > ts; });
+    if(quedan.length !== antes){ db[col] = quedan; n += antes - quedan.length; }
+  });
+  return n;
+}
+function kxRegistrarEliminado(col, k, desc, ultimoTs){
+  if(!col || !k || KX_SIN_TUMBAS.has(col)) return;
+  if(!Array.isArray(DB.eliminados)) DB.eliminados = [];
+  const id = 'DEL-'+col+'-'+k, ts = Date.now();
+  const ex = DB.eliminados.find(e=>e.id===id);
+  if(ex){ if((ex.ts||0) >= (ultimoTs||0)) return; ex.ts = ts; ex._ts = ts; ex.por = usuarioActual?.nombre||'?'; }
+  else DB.eliminados.push({ id, col, k, ts, _ts:ts, por: usuarioActual?.nombre||'?', desc: desc||'' });
+  try{ encolarCambio('eliminados','upsert',{id}); }catch(_){}
+}
+
+// Detección automática de borrados: compara qué registros había y cuáles quedan
+let _kxSnap = null, _kxBulk = 0, _kxDetT = null, _kxSincro = 0;
+function kxFoto(){
+  const s = {};
+  LS_KEYS_ARRAYS.forEach(col=>{
+    if(KX_SIN_TUMBAS.has(col) || !Array.isArray(DB[col])) return;
+    const m = new Map();
+    DB[col].forEach(r=>{ const k = kxClaveReg(col, r); if(k) m.set(k, {ts:r._ts||0, d:r.desc||r.nombre||r.producto||r.nro||''}); });
+    s[col] = m;
+  });
+  return s;
+}
+function kxDetectarBorrados(){
+  const ahora = kxFoto();
+  if(_kxBulk > 0 || !_kxSnap || !usuarioActual){ _kxSnap = ahora; return; }
+  const tumbas = kxMapaTumbas(DB), borrados = [];
+  Object.keys(ahora).forEach(col=>{
+    const antes = _kxSnap[col]; if(!antes) return;
+    antes.forEach((info, k)=>{ if(!ahora[col].has(k)) borrados.push([col, k, info]); });
+    // Registro vuelto a crear con el mismo código: queda más nuevo que la marca
+    const tc = tumbas.get(col);
+    if(tc && !_kxSincro) ahora[col].forEach((info, k)=>{
+      if(antes.has(k) || !tc.has(k) || info.ts > tc.get(k)) return;
+      const r = DB[col].find(x=>kxClaveReg(col,x)===k); if(r){ r._ts = Date.now(); info.ts = r._ts; }
+    });
+  });
+  _kxSnap = ahora;
+  if(!borrados.length) return;
+  if(borrados.length > 30){ console.warn('[eliminados] muchos registros quitados a la vez; no se registran:', borrados.length); return; }
+  borrados.forEach(([col,k,info])=>kxRegistrarEliminado(col, k, info.d, info.ts));
+}
+let _kxDetectando = false;
+// Se anota en el mismo momento del borrado: si hay una sincronización en curso, al terminar ya respeta la marca
+function kxProgramarDeteccion(){ if(_kxDetectando) return; _kxDetectando = true; try{ kxDetectarBorrados(); }catch(e){ console.warn(e); } finally{ _kxDetectando = false; } }
+
+(function(){
+  const g = window.guardarEnStorage;
+  window.guardarEnStorage = guardarEnStorage = function(...a){ const r = g.apply(this, a); kxProgramarDeteccion(); return r; };
+  // Operaciones masivas: no cuentan como borrados del usuario
+  ['cargarDesdeStorage','restaurarBackup','importarBackupExterno','limpiarStorage','kxPurgarArchivados','kxReemplazarNube'].forEach(n=>{
+    const f = window[n]; if(typeof f !== 'function') return;
+    window[n] = function(...a){
+      _kxBulk++; let r;
+      try{ r = f.apply(this, a); }
+      finally{
+        const fin = ()=>{ _kxBulk--; try{ if(n==='cargarDesdeStorage') kxAplicarEliminados(DB); }catch(_){} _kxSnap = kxFoto(); };
+        if(r && typeof r.then==='function') r.then(fin, fin); else fin();
+      }
+      return r;
+    };
+    try{ eval(n+' = window.'+n); }catch(_){}
+  });
+  // Después de sincronizar: aplicar las marcas que llegaron de otras PC
+  ['sincronizarNube','pullSilencioso'].forEach(n=>{
+    const f = window[n]; if(typeof f !== 'function') return;
+    window[n] = async function(...a){
+      try{ kxAplicarEliminados(DB); }catch(_){}
+      _kxSincro++; let r;
+      try{ r = await f.apply(this, a); }
+      finally{
+        _kxSincro--;
+        try{ if(kxAplicarEliminados(DB) > 0){ guardarEnStorage(); kxRedibujarActual(); } }catch(e){ console.warn(e); }
+        _kxSnap = kxFoto();
+      }
+      return r;
+    };
+    try{ eval(n+' = window.'+n); }catch(_){}
+  });
+})();
+function kxRedibujarActual(){
+  try{
+    const act = document.querySelector('.page.active'); const id = act && act.id.replace('page-','');
+    const f = { inventario:'renderInventario', materia:'renderMateria', dashboard:'renderDashboard', recetas:'renderRecetas', pedidos:'renderPedidos', produccion:'renderProduccion' }[id];
+    if(f && typeof window[f]==='function') window[f]();
+    if(typeof kxRefrescarReponer==='function') kxRefrescarReponer();
+  }catch(_){}
+}
+
+// ───────────────────────────────────────────────────────────────
+// UNIFICAR / ELIMINAR INSUMOS
+// ───────────────────────────────────────────────────────────────
+const KX_DUP_ROLES = ['Dueño','Administrador','Programador'];
+function kxPuedeUnificar(){ return !!(usuarioActual && KX_DUP_ROLES.includes(usuarioActual.rol)); }
+const KX_INS_KEYS = ['ins','insId','insumoId','idInsumo'];
+const KX_DUP_OTRAS = ['remitos','pedidosCompartidos','ordenes','combos','packaging','packagingMovimientos','pedidosRepartidores','catalogoProductos'];
+
+function kxNomNorm(t){
+  return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+    .replace(/[^A-Z0-9]/g,'').replace(/(.)\1+/g,'$1');
+}
+function kxPalabras(t){ return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean).map(w=>w.replace(/(.)\1+/g,'$1')).sort().join(''); }
+function kxLev(a,b){
+  if(a===b) return 0; const m=a.length, n=b.length; if(!m||!n) return m||n;
+  let prev = Array.from({length:n+1},(_,j)=>j);
+  for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; }
+  return prev[n];
+}
+function kxParecido(a,b){
+  const x=kxNomNorm(a), y=kxNomNorm(b); if(!x||!y) return 0;
+  const p1 = 1 - kxLev(x,y)/Math.max(x.length,y.length);
+  const w1=kxPalabras(a), w2=kxPalabras(b);   // "LA RIQUISIMA GRASA" = "GRASA LA RIQUISIMA"
+  const p2 = 1 - kxLev(w1,w2)/Math.max(w1.length,w2.length);
+  return Math.max(p1, p2);
+}
+function kxUomNorm(u){ u=String(u||'').toLowerCase().trim(); return ({l:'lt',litro:'lt',litros:'lt',gr:'g',unidad:'u',unidades:'u',un:'u'})[u]||u; }
+function kxUltProveedor(id){
+  const l = (DB.materiaPrima||[]).filter(r=>r.id===id && r.proveedor).sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
+  return l[0] ? l[0].proveedor : '';
+}
+function kxSugerirDuplicados(){
+  const ins = (DB.inventario||[]).filter(i=>i && i.id);
+  const out = [];
+  for(let i=0;i<ins.length;i++) for(let j=i+1;j<ins.length;j++){
+    const a=ins[i], b=ins[j];
+    if(kxUomNorm(a.uom)!==kxUomNorm(b.uom)) continue;
+    const p = kxParecido(a.desc, b.desc);
+    if(p < 0.8) continue;
+    const pa=kxUltProveedor(a.id), pb=kxUltProveedor(b.id);
+    out.push({a, b, p, mismoProv: !!(pa && pa===pb), prov: pa===pb?pa:''});
+  }
+  return out.sort((x,y)=>y.p-x.p || (y.mismoProv-x.mismoProv)).slice(0,40);
+}
+
+function kxRecorrer(obj, fn, prof=0){
+  if(!obj || typeof obj!=='object' || prof>6) return;
+  if(Array.isArray(obj)){ obj.forEach(o=>kxRecorrer(o, fn, prof+1)); return; }
+  fn(obj); Object.values(obj).forEach(v=>{ if(v && typeof v==='object') kxRecorrer(v, fn, prof+1); });
+}
+function kxRefsInsumo(id){
+  const r = { mp:[], movs:[], recetas:[], pedidos:[], otros:[], cierres:[] };
+  (DB.materiaPrima||[]).forEach(x=>{ if(x.id===id) r.mp.push(x); });
+  (DB.movimientosMP||[]).forEach(x=>{ if(x.ins===id) r.movs.push(x); });
+  (DB.recetas||[]).forEach(rec=>{ if(['ingredientes','relleno','decorado'].some(k=>(rec[k]||[]).some(g=>g && g.ins===id))) r.recetas.push(rec); });
+  (DB.pedidos||[]).forEach(x=>{ if(x.insId===id) r.pedidos.push(x); });
+  KX_DUP_OTRAS.forEach(col=>(DB[col]||[]).forEach(reg=>{
+    let usa=false; kxRecorrer(reg, o=>{ if(KX_INS_KEYS.some(k=>o[k]===id)) usa=true; });
+    if(usa) r.otros.push({col, reg});
+  }));
+  (DB.cierresMP||[]).forEach(c=>{ const inf=c.informe; if(!inf) return;
+    let usa = !!(inf.estadoVal && inf.estadoVal[id]); if(!usa) kxRecorrer(inf, o=>{ if(o.ins===id) usa=true; });
+    if(usa) r.cierres.push(c); });
+  r.total = r.mp.length + r.movs.length + r.recetas.length + r.pedidos.length + r.otros.length + r.cierres.length;
+  return r;
+}
+
+// Recalcula el stock resultante (sd) de la historia combinada de los dos insumos
+function kxRecalcSaldos(movsA, movsB, stockA, stockB){
+  const ap = l => l.length ? Math.max(0,(Number(l[0].sd)||0)-(Number(l[0].d)||0)) : null;
+  const ord = (a,b)=>(a.f||'').localeCompare(b.f||'') || (a._ord||a._ts||0)-(b._ord||b._ts||0);
+  const A=[...movsA].sort(ord), B=[...movsB].sort(ord);
+  const ult = { A: A.length?ap(A):stockA, B: B.length?ap(B):stockB };
+  const todos = [...A.map(m=>['A',m]), ...B.map(m=>['B',m])].sort((x,y)=>ord(x[1],y[1]));
+  todos.forEach(([o,m])=>{ if(m.sd!=null && isFinite(m.sd)) ult[o]=Number(m.sd); m.sd = +(ult.A+ult.B).toFixed(4); });
+}
+function kxFusionarFila(dest, orig){
+  Object.keys(orig).forEach(k=>{
+    const v=orig[k];
+    if(typeof v==='number' && typeof dest[k]==='number') dest[k]+=v;
+    else if(typeof v==='number' && dest[k]==null) dest[k]=v;
+    else if(v && typeof v==='object' && !Array.isArray(v) && k==='motivos'){ dest[k]=dest[k]||{}; Object.entries(v).forEach(([m,x])=>dest[k][m]=(dest[k][m]||0)+(Number(x)||0)); }
+  });
+}
+function kxFusionarInforme(inf, B, A, descA){
+  if(!inf) return;
+  if(inf.estadoVal && inf.estadoVal[B]){
+    const b=inf.estadoVal[B], a=inf.estadoVal[A];
+    if(!a) inf.estadoVal[A]=b;
+    else { const q=(a.q||0)+(b.q||0); a.c = q>0 ? ((a.q||0)*(a.c||0)+(b.q||0)*(b.c||0))/q : (a.c||b.c||0); a.q=q; a.capas=[...(a.capas||[]),...(b.capas||[])]; }
+    delete inf.estadoVal[B];
+  }
+  kxRecorrer(inf, o=>{
+    Object.keys(o).forEach(k=>{ const arr=o[k]; if(!Array.isArray(arr) || !arr.some(f=>f && f.ins===B)) return;
+      const fb=arr.filter(f=>f && f.ins===B), resto=arr.filter(f=>!(f && f.ins===B));
+      let fa=resto.find(f=>f && f.ins===A);
+      fb.forEach(f=>{ if(fa) kxFusionarFila(fa,f); else { f.ins=A; if('ds' in f) f.ds=descA; if('desc' in f) f.desc=descA; resto.push(f); fa=f; } });
+      o[k]=resto; });
+  });
+}
+
+// Ejecuta la unificación: B (se elimina) → A (queda)
+function kxUnificarInsumos(B, A, motivo){
+  const a=getInsumo(A), b=getInsumo(B);
+  if(!a || !b || A===B) throw new Error('Insumos inválidos');
+  const ahora=Date.now(), refs=kxRefsInsumo(B), movsA=(DB.movimientosMP||[]).filter(m=>m.ins===A);
+  const stockA=Number(a.stock)||0, stockB=Number(b.stock)||0;
+  kxBackupAntesDe('unificar');
+  // Historia del kardex: se pasa al que queda y se recalculan los saldos
+  kxRecalcSaldos(movsA, refs.movs, stockA, stockB);
+  [...movsA, ...refs.movs].forEach(m=>{ if(m._ord==null) m._ord=m._ts||0; m._ts=ahora; });
+  refs.movs.forEach(m=>{ m.ins=A; m.ds=a.desc; });
+  // Ingresos (compras): quedan a nombre del correcto, con su mismo identificador
+  refs.mp.forEach(r=>{ if(!r.mpId) r.mpId=kxClaveMP(r); r.id=A; r.desc=a.desc; r._ts=ahora; });
+  // Recetas
+  refs.recetas.forEach(rec=>{ ['ingredientes','relleno','decorado'].forEach(k=>(rec[k]||[]).forEach(g=>{ if(g && g.ins===B) g.ins=A; })); rec._ts=ahora; });
+  // Pedidos a proveedores
+  refs.pedidos.forEach(p=>{ p.insId=A; if(p.insDesc!=null) p.insDesc=a.desc; p._ts=ahora; });
+  // Remitos y demás
+  refs.otros.forEach(({reg})=>{ kxRecorrer(reg, o=>{ KX_INS_KEYS.forEach(k=>{ if(o[k]===B){ o[k]=A; if(typeof o.desc==='string') o.desc=a.desc; } }); }); reg._ts=ahora; });
+  // Cierres mensuales: las filas del insumo eliminado se suman al que queda
+  refs.cierres.forEach(c=>{ kxFusionarInforme(c.informe, B, A, a.desc); c._ts=ahora; });
+  // El insumo que queda: suma stock y reservado; completa lo que le falte
+  a.stock = +(stockA + stockB).toFixed(4);
+  if(b.reservado) a.reservado = +((Number(a.reservado)||0) + (Number(b.reservado)||0)).toFixed(4);
+  ['min','max','precio','cat','sector'].forEach(k=>{ if((a[k]==null || a[k]==='' || a[k]===0) && b[k]) a[k]=b[k]; });
+  a._ts=ahora;
+  // Eliminar el duplicado y dejar la marca para todas las PC
+  DB.inventario = DB.inventario.filter(i=>i.id!==B);
+  kxRegistrarEliminado('inventario', B, b.desc, Infinity);
+  registrarAuditoria('Eliminación', `Insumo ${B} — ${b.desc}`,
+    `Unificado en ${A} — ${a.desc}. Motivo: "${motivo||'duplicado'}". Stock traspasado: ${fmtN(stockB)} ${b.uom||''} (queda ${fmtN(a.stock)}). `+
+    `Movidos: ${refs.mp.length} ingresos, ${refs.movs.length} movimientos, ${refs.recetas.length} recetas, ${refs.pedidos.length} pedidos, ${refs.otros.length} otros, ${refs.cierres.length} cierres.`);
+  try{ encolarCambio('inventario','upsert',a); }catch(_){}
+  guardarEnStorage(); _kxSnap = kxFoto();
+  return refs;
+}
+function kxEliminarInsumo(B, motivo){
+  const b=getInsumo(B); if(!b) throw new Error('Insumo inexistente');
+  const refs=kxRefsInsumo(B);
+  if(refs.total>0 || (Number(b.stock)||0)!==0) throw new Error('Tiene historial o stock: hay que unificarlo');
+  kxBackupAntesDe('eliminar');
+  DB.inventario = DB.inventario.filter(i=>i.id!==B);
+  kxRegistrarEliminado('inventario', B, b.desc, Infinity);
+  registrarAuditoria('Eliminación', `Insumo ${B} — ${b.desc}`, `Motivo: "${motivo||'sin uso'}". No tenía historial ni stock.`);
+  guardarEnStorage(); _kxSnap = kxFoto();
+}
+function kxBackupAntesDe(que){
+  try{
+    const d=new Date(), p=n=>String(n).padStart(2,'0');
+    const k=BACKUP_KEY_PREFIX+d.toISOString().slice(0,10)+'_'+p(d.getHours())+p(d.getMinutes())+'_antes-de-'+que;
+    localStorage.setItem(k, JSON.stringify({...DB, auditoria:(DB.auditoria||[]).slice(-30)}));
+  }catch(e){ console.warn('Backup previo falló', e); }
+}
+
+// ── Interfaz ──────────────────────────────────────────────────
+let _kxDup = { B:'', A:'', paso:1 };
+function kxDupEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function kxDupModal(){
+  let m=document.getElementById('modal-kx-dup'); if(m) return m;
+  m=document.createElement('div'); m.className='modal-overlay'; m.id='modal-kx-dup';
+  m.innerHTML=`<div class="modal" style="max-width:720px">
+    <div class="modal-header"><span>🔗</span><h2 id="kxdup-tit">Unificar o eliminar insumos</h2>
+      <button class="modal-close" onclick="cerrarModal('modal-kx-dup')">✕</button></div>
+    <div class="modal-body" id="kxdup-body" style="max-height:70vh;overflow:auto"></div></div>`;
+  document.body.appendChild(m); return m;
+}
+function kxDupOpciones(sel, excluir){
+  return [...(DB.inventario||[])].filter(i=>i.id!==excluir).sort((a,b)=>String(a.desc).localeCompare(String(b.desc)))
+    .map(i=>`<option value="${kxDupEsc(i.id)}" ${i.id===sel?'selected':''}>${kxDupEsc(i.desc)} · ${kxDupEsc(i.id)} · ${fmtN(Number(i.stock)||0)} ${kxDupEsc(i.uom||'')}</option>`).join('');
+}
+function kxDupAbrir(origen){
+  if(!kxPuedeUnificar()){ toast('⚠️ Solo Dueño, Administrador o Programador pueden unificar o eliminar insumos','error'); return; }
+  _kxDup = { B: origen||'', A:'', paso:1 };
+  kxDupModal(); kxDupInicio(); document.getElementById('modal-kx-dup').classList.add('open');
+}
+function kxDupInicio(){
+  const sug = kxSugerirDuplicados().filter(s=>!_kxDup.B || s.a.id===_kxDup.B || s.b.id===_kxDup.B);
+  const fila = s=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--borde,#e5d9c5);border-radius:8px;margin-bottom:6px">
+      <div style="flex:1;font-size:13px"><strong>${kxDupEsc(s.a.desc)}</strong> <span style="opacity:.6">${s.a.id}</span><br><strong>${kxDupEsc(s.b.desc)}</strong> <span style="opacity:.6">${s.b.id}</span>
+      <div style="font-size:11px;opacity:.75;margin-top:2px">Parecido ${Math.round(s.p*100)}%${s.mismoProv?' · mismo proveedor ('+kxDupEsc(s.prov)+')':''} · ${kxDupEsc(s.a.uom||'')}</div></div>
+      <button class="btn-secondary" onclick="kxDupElegir('${s.b.id}','${s.a.id}')">Revisar →</button></div>`;
+  document.getElementById('kxdup-tit').textContent='Unificar o eliminar insumos';
+  document.getElementById('kxdup-body').innerHTML = `
+    <p style="font-size:13px;margin:0 0 12px">Elegí el insumo que <strong>se elimina</strong> (el duplicado o mal escrito) y el que <strong>queda</strong>. Todo lo del primero (stock, compras, kardex, recetas, pedidos y remitos) pasa al segundo.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><label style="font-size:11px;font-weight:700">🗑️ SE ELIMINA</label><select id="kxdup-b" style="width:100%" onchange="_kxDup.B=this.value;kxDupInicio()"><option value="">— elegir —</option>${kxDupOpciones(_kxDup.B)}</select></div>
+      <div><label style="font-size:11px;font-weight:700">✅ QUEDA</label><select id="kxdup-a" style="width:100%" onchange="_kxDup.A=this.value"><option value="">— elegir —</option>${kxDupOpciones(_kxDup.A, _kxDup.B)}</select></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="btn-primary" onclick="kxDupElegir(document.getElementById('kxdup-b').value, document.getElementById('kxdup-a').value)">🔗 Revisar unificación</button>
+      <button class="btn-secondary" onclick="kxDupSoloEliminar(document.getElementById('kxdup-b').value)">🗑️ Eliminar sin unificar</button>
+    </div>
+    <h4 style="margin:0 0 8px;font-size:13px">💡 Posibles duplicados ${_kxDup.B?'de este insumo':'detectados'} (${sug.length})</h4>
+    ${sug.length ? sug.map(fila).join('') : '<p style="font-size:12px;opacity:.7">No se encontraron nombres parecidos con la misma unidad.</p>'}`;
+}
+function kxDupElegir(B, A){
+  if(!B || !A){ toast('⚠️ Elegí el insumo que se elimina y el que queda','error'); return; }
+  if(B===A){ toast('⚠️ Tienen que ser dos insumos distintos','error'); return; }
+  _kxDup = { B, A, paso:1 }; kxDupPaso1();
+}
+function kxDupTarjeta(i, rol, color){
+  return `<div style="flex:1;border:2px solid ${color};border-radius:10px;padding:10px;font-size:13px">
+    <div style="font-size:11px;font-weight:800;color:${color}">${rol}</div>
+    <div style="font-weight:700;margin:4px 0">${kxDupEsc(i.desc)}</div>
+    <div style="opacity:.8">${i.id} · ${kxDupEsc(i.uom||'')} · stock ${fmtN(Number(i.stock)||0)}</div>
+    <div style="opacity:.8">Proveedor: ${kxDupEsc(kxUltProveedor(i.id)||'—')}</div></div>`;
+}
+function kxDupPaso1(){
+  const {A,B}=_kxDup, a=getInsumo(A), b=getInsumo(B); if(!a||!b) return;
+  const r=kxRefsInsumo(B), uomOk = kxUomNorm(a.uom)===kxUomNorm(b.uom);
+  const li=(n,t)=>n?`<li>${t}</li>`:'';
+  document.getElementById('kxdup-tit').textContent='Paso 1 de 3 — Revisar qué se mueve';
+  document.getElementById('kxdup-body').innerHTML=`
+    <div style="display:flex;gap:10px;align-items:stretch;margin-bottom:12px">${kxDupTarjeta(b,'🗑️ SE ELIMINA','var(--alerta,#c0392b)')}
+      <button class="btn-secondary" title="Invertir" onclick="kxDupElegir('${A}','${B}')" style="align-self:center">⇄</button>
+      ${kxDupTarjeta(a,'✅ QUEDA','var(--exito,#2e7d32)')}</div>
+    ${uomOk?'':`<div style="background:#fdecea;border-radius:8px;padding:10px;font-size:13px;margin-bottom:10px">⛔ Tienen distinta unidad (${kxDupEsc(b.uom)} y ${kxDupEsc(a.uom)}). No se pueden sumar sus stocks. Corregí la unidad antes de unificar.</div>`}
+    <div style="background:var(--vapor,#faf5ec);border-radius:8px;padding:10px 14px;font-size:13px">
+      <strong>Esto pasa a "${kxDupEsc(a.desc)}":</strong>
+      <ul style="margin:6px 0 0 18px;padding:0">
+        <li>Stock: ${fmtN(Number(b.stock)||0)} ${kxDupEsc(b.uom||'')} → queda en <strong>${fmtN((Number(a.stock)||0)+(Number(b.stock)||0))} ${kxDupEsc(a.uom||'')}</strong></li>
+        ${li(r.mp.length, `${r.mp.length} ingreso(s) de compra`)}
+        ${li(r.movs.length, `${r.movs.length} movimiento(s) del kardex`)}
+        ${li(r.recetas.length, `${r.recetas.length} receta(s): ${r.recetas.slice(0,6).map(x=>kxDupEsc(x.nombre||x.id)).join(', ')}${r.recetas.length>6?'…':''}`)}
+        ${li(r.pedidos.length, `${r.pedidos.length} pedido(s) a proveedor`)}
+        ${li(r.otros.length, `${r.otros.length} remito(s) u otros registros`)}
+        ${li(r.cierres.length, `${r.cierres.length} cierre(s) mensual(es)`)}
+      </ul>
+      <div style="margin-top:8px;font-size:12px;opacity:.8">Antes de hacerlo se guarda un backup automático y queda registrado en Auditoría.</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="kxDupInicio()">← Volver</button>
+      <button class="btn-primary" ${uomOk?'':'disabled'} onclick="kxDupPaso2()">Continuar →</button></div>`;
+}
+function kxDupPaso2(soloEliminar){
+  const b=getInsumo(_kxDup.B); if(!b) return;
+  _kxDup.solo=!!soloEliminar;
+  document.getElementById('kxdup-tit').textContent='Paso 2 de 3 — Confirmar el nombre';
+  document.getElementById('kxdup-body').innerHTML=`
+    <p style="font-size:13px">Para confirmar, escribí el nombre del insumo que <strong>se elimina</strong>, tal como está:</p>
+    <div style="font-weight:800;font-size:15px;margin:6px 0 10px;color:var(--alerta,#c0392b)">${kxDupEsc(b.desc)}</div>
+    <input id="kxdup-conf" type="text" autocomplete="off" style="width:100%" oninput="document.getElementById('kxdup-sig').disabled = kxNomNorm(this.value)!==kxNomNorm(${JSON.stringify(b.desc).replace(/"/g,'&quot;')})">
+    <label style="display:block;font-size:12px;font-weight:700;margin-top:12px">Motivo (opcional)</label>
+    <input id="kxdup-mot" type="text" style="width:100%" placeholder="Ej: nombre mal escrito, cargado dos veces">
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="${soloEliminar?'kxDupInicio()':'kxDupPaso1()'}">← Volver</button>
+      <button class="btn-primary" id="kxdup-sig" disabled onclick="_kxDup.motivo=document.getElementById('kxdup-mot').value.trim();kxDupPaso3()">Continuar →</button></div>`;
+  setTimeout(()=>document.getElementById('kxdup-conf')?.focus(),50);
+}
+function kxDupPaso3(){
+  const a=getInsumo(_kxDup.A), b=getInsumo(_kxDup.B); if(!b) return;
+  document.getElementById('kxdup-tit').textContent='Paso 3 de 3 — Confirmación final';
+  document.getElementById('kxdup-body').innerHTML=`
+    <div style="background:#fdecea;border-radius:10px;padding:14px;font-size:14px;line-height:1.5">
+      ${_kxDup.solo ? `Se va a <strong>eliminar definitivamente</strong> "${kxDupEsc(b.desc)}" (${b.id}) en todas las PC.`
+        : `Se va a <strong>eliminar definitivamente</strong> "${kxDupEsc(b.desc)}" (${b.id}) y todo lo suyo pasa a <strong>"${kxDupEsc(a.desc)}"</strong> (${a.id}), en todas las PC.`}
+      <br>Esta acción no se deshace desde acá (solo restaurando el backup automático).</div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="cerrarModal('modal-kx-dup')">Cancelar</button>
+      <button id="kxdup-final" onclick="kxDupEjecutar()" style="background:var(--alerta,#c0392b);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:800;cursor:pointer">🗑️ ${_kxDup.solo?'Eliminar definitivamente':'Unificar y eliminar'}</button></div>`;
+}
+function kxDupEjecutar(){
+  const {A,B,motivo,solo}=_kxDup;
+  try{
+    if(solo){ const d=getInsumo(B)?.desc; kxEliminarInsumo(B, motivo); toast(`🗑️ "${d}" eliminado`,'success'); }
+    else { const d=getInsumo(B)?.desc, q=getInsumo(A)?.desc; kxUnificarInsumos(B, A, motivo); toast(`🔗 "${d}" unificado en "${q}"`,'success'); }
+    cerrarModal('modal-kx-dup'); kxRedibujarActual();
+    try{ sincronizarNube(true); }catch(_){}
+  }catch(e){ toast('⚠️ '+e.message,'error'); }
+}
+function kxDupSoloEliminar(B){
+  if(!B){ toast('⚠️ Elegí el insumo que se elimina','error'); return; }
+  const b=getInsumo(B), r=kxRefsInsumo(B);
+  _kxDup={B, A:'', paso:1};
+  if(r.total>0 || (Number(b.stock)||0)!==0){
+    document.getElementById('kxdup-tit').textContent='No se puede eliminar solo';
+    document.getElementById('kxdup-body').innerHTML=`<p style="font-size:13px">"${kxDupEsc(b.desc)}" tiene ${fmtN(Number(b.stock)||0)} ${kxDupEsc(b.uom||'')} de stock y ${r.total} registro(s) asociados (compras, kardex, recetas u otros). Si lo borrás se pierde esa información.</p>
+      <p style="font-size:13px"><strong>Unificalo</strong> con el insumo correcto: todo lo suyo pasa al otro y después se elimina.</p>
+      <div style="display:flex;justify-content:space-between;margin-top:12px"><button class="btn-secondary" onclick="kxDupInicio()">← Volver</button>
+      <button class="btn-primary" onclick="_kxDup.B='${B}';kxDupInicio()">🔗 Elegir con cuál unificar</button></div>`;
+    return;
+  }
+  kxDupPaso2(true);
+}
+
+// Botón en Stock Actual + botón 🗑️ por fila
+(function(){
+  const r0 = window.renderInventario;
+  window.renderInventario = renderInventario = function(...a){
+    const r = r0.apply(this, a);
+    try{
+      const pg=document.getElementById('page-inventario');
+      const exp=pg && [...pg.querySelectorAll('button')].find(b=>(b.getAttribute('onclick')||'').includes('exportarInventarioExcel'));
+      let btn=document.getElementById('kxdup-btn');
+      if(kxPuedeUnificar()){
+        if(!btn && exp){ btn=document.createElement('button'); btn.id='kxdup-btn'; btn.className='btn-secondary'; btn.textContent='🔗 Duplicados / Eliminar'; btn.onclick=()=>kxDupAbrir(); exp.parentNode.insertBefore(btn, exp); }
+        document.querySelectorAll('#tbl-inventario tr').forEach(tr=>{
+          const td=tr.querySelector('td'); if(!td || tr.querySelector('.kxdup-row')) return;
+          const id=(td.textContent||'').trim(); if(!getInsumo(id)) return;
+          const last=tr.lastElementChild; const b=document.createElement('button');
+          b.className='btn-secondary kxdup-row'; b.title='Unificar o eliminar'; b.textContent='🗑️'; b.style.cssText='padding:3px 7px;margin-left:4px';
+          b.onclick=e=>{ e.stopPropagation(); kxDupAbrir(id); }; last.appendChild(b);
+        });
+      } else if(btn) btn.remove();
+    }catch(e){ console.warn(e); }
+    return r;
+  };
+})();
+setTimeout(()=>{ _kxSnap = kxFoto(); }, 1500);
+
 </script>
 </body>
 </html>
