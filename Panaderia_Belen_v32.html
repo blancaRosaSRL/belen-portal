@@ -5402,7 +5402,7 @@ function renderDashboard(){
     }
   }
 
-  const reponer = DB.inventario.filter(i=>i.stock<=i.min);
+  const reponer = kxInsumosReponer();
   const valorTotal = DB.inventario.reduce((s,i)=>s+i.stock*i.precio,0);
   const pendientes = DB.pedidos.filter(p=>p.estado==='Pendiente'||p.estado==='En camino');
 
@@ -6048,7 +6048,7 @@ function irAReponerInventario(){
   showPage('inventario', btn);
   // Después de renderizar, filtrar y resaltar los que están bajos
   setTimeout(()=>{
-    const bajos = DB.inventario.filter(i=>i.stock <= i.min);
+    const bajos = kxInsumosReponer();
     if(bajos.length === 0){ toast('✅ No hay insumos bajo mínimo','success'); return; }
     // Hacer scroll al primer insumo bajo
     const filas = document.querySelectorAll('#tbl-inventario tr');
@@ -10627,7 +10627,7 @@ function exportarRecetasExcel(){
 function generarReportePDF(){
   const fecha = new Date().toLocaleDateString('es-AR',{day:'2-digit',month:'long',year:'numeric'});
   const valorInventario = DB.inventario.reduce((s,i)=>s+i.stock*i.precio,0);
-  const reponer = DB.inventario.filter(i=>i.stock<=i.min);
+  const reponer = kxInsumosReponer();
   const pendientes = DB.pedidos.filter(p=>p.estado==='Pendiente'||p.estado==='En camino');
 
   const filasInventario = DB.inventario.map(i=>`
@@ -16231,11 +16231,31 @@ function kxCantSugerida(ins){
   return Math.max(0, +(objetivo - stock).toFixed(3));
 }
 
+// v33.8: criterio único de "a reponer" (insumos activos con stock en el mínimo o debajo)
+function kxInsumosReponer(){
+  return (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo' && (Number(i.stock)||0) <= (Number(i.min)||0));
+}
+// Actualiza al instante la lista del Dashboard, la tarjeta "A reponer" y el contador del menú
+function kxRefrescarReponer(){
+  try{
+    const n = kxInsumosReponer().length;
+    const b = document.getElementById('badge-stock'); if(b) b.textContent = n;
+    const k = document.getElementById('kpi-reponer'); if(k) k.textContent = n;
+    kxRenderReponer();
+    const m = document.getElementById('kx-modal-reponer');
+    if(document.getElementById('page-inventario')?.classList.contains('active') && typeof grfInventario==='function') grfInventario();
+  }catch(e){ console.warn('Refrescar reponer:', e); }
+}
+(function(){
+  const orig = window.guardarEnStorage; let t = null;
+  window.guardarEnStorage = function(){ const r = orig.apply(this, arguments);
+    clearTimeout(t); t = setTimeout(kxRefrescarReponer, 250); return r; };
+})();
 function kxRenderReponer(){
   const div = document.getElementById('dash-reponer');
   if(!div) return;
-  const reponer = DB.inventario.filter(i=>i.stock<=i.min);
-  if(!reponer.length) return;
+  const reponer = kxInsumosReponer();
+  if(!reponer.length){ div.innerHTML='<div class="empty-state"><div class="es-icon">✅</div><h4>Todo en orden</h4><p>Sin alertas de stock</p></div>'; return; }
   div.innerHTML = `<div style="font-size:11px;color:var(--texto-2);padding:8px 14px 0">Tocá un insumo para cargar la compra, corregir el stock o pedirlo</div>
     <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th><th></th></tr></thead><tbody>` +
     reponer.map(i=>`<tr style="cursor:pointer" onclick="kxAbrirReponer('${kxEsc(i.id)}')" title="Actualizar stock de ${kxEsc(i.desc)}">
@@ -17381,7 +17401,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '33.7';
+const BELEN_BUILD = '33.8';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
