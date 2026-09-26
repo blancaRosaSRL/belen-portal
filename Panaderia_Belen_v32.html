@@ -17409,7 +17409,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '34.0';
+const BELEN_BUILD = '34.1';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -18727,7 +18727,7 @@ function kxProgramarDeteccion(){ if(_kxDetectando) return; _kxDetectando = true;
 function kxRedibujarActual(){
   try{
     const act = document.querySelector('.page.active'); const id = act && act.id.replace('page-','');
-    const f = { inventario:'renderInventario', materia:'renderMateria', dashboard:'renderDashboard', recetas:'renderRecetas', pedidos:'renderPedidos', produccion:'renderProduccion' }[id];
+    const f = { inventario:'renderInventario', materia:'renderMateriaPrima', dashboard:'renderDashboard', recetas:'renderRecetas', pedidos:'renderPedidos', produccion:'renderProduccion' }[id];
     if(f && typeof window[f]==='function') window[f]();
     if(typeof kxRefrescarReponer==='function') kxRefrescarReponer();
   }catch(_){}
@@ -19043,6 +19043,166 @@ function kxDupSoloEliminar(B){
   };
 })();
 setTimeout(()=>{ _kxSnap = kxFoto(); }, 1500);
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v34.1 — ELIMINAR UN INGRESO DESDE EL LÁPIZ ✏️
+// ═══════════════════════════════════════════════════════════════
+KX_ORIGEN.correccion = 'Corrección de ingreso';
+let _kxMp = { k:'', modo:'' };
+function kxMpBuscar(){ return (DB.materiaPrima||[]).find(r=>kxClaveReg('materiaPrima', r)===_kxMp.k) || null; }
+function kxMpAnalisis(r){
+  const ins = getInsumo(r.id), cant = Number(r.cantidad)||0;
+  const stockAntes = ins ? Number(ins.stock)||0 : 0;
+  const yaDescontado = !!r.decomiso;                      // si fue a decomiso, el stock ya se descontó
+  const stockDespues = ins ? (yaDescontado ? stockAntes : Math.max(0, +(stockAntes - cant).toFixed(4))) : 0;
+  const refs = ins ? kxRefsInsumo(r.id) : null;
+  const otrosIngresos = refs ? refs.mp.filter(x=>x!==r).length : 0;
+  const bloqueaInsumo = refs ? (otrosIngresos + refs.recetas.length + refs.pedidos.length + refs.otros.length) : 0;
+  const borraInsumo = !!ins && bloqueaInsumo===0 && stockDespues===0;
+  return { ins, cant, stockAntes, stockDespues, yaDescontado, refs, otrosIngresos, borraInsumo,
+           faltaStock: !yaDescontado && stockAntes < cant };
+}
+function kxMpEliminarAbrir(){
+  if(!kxPuedeUnificar()){ toast('⚠️ Solo Dueño, Administrador o Programador pueden eliminar ingresos','error'); return; }
+  const r = DB.materiaPrima[materiaPrimaEditandoIdx]; if(!r) return;
+  if(typeof kxFechaBloqueada==='function' && kxFechaBloqueada(r.fecha)){ kxAvisoBloqueo(r.fecha); return; }
+  if(!r.mpId) r.mpId = kxClaveMP(r);
+  _kxMp = { k: r.mpId, modo:'' };
+  cerrarModal('modal-editar-materia');
+  kxDupModal(); kxMpPaso1(); document.getElementById('modal-kx-dup').classList.add('open');
+}
+function kxMpPaso1(){
+  const r = kxMpBuscar(); if(!r){ toast('⚠️ El ingreso ya no existe','error'); cerrarModal('modal-kx-dup'); return; }
+  const a = kxMpAnalisis(r), u = kxDupEsc(r.uom || a.ins?.uom || '');
+  const fch = r.fecha ? r.fecha.split('-').reverse().join('/') : '—';
+  document.getElementById('kxdup-tit').textContent = 'Paso 1 de 3 — Eliminar ingreso';
+  document.getElementById('kxdup-body').innerHTML = `
+    <div style="border:2px solid var(--alerta,#c0392b);border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:12px">
+      <div style="font-weight:800;font-size:15px">${kxDupEsc(r.desc)}</div>
+      <div style="opacity:.85">${kxDupEsc(r.id)} · ${fch} · ${fmtN(a.cant)} ${u} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · ${kxDupEsc(r.proveedor||'sin proveedor')}${r.lote?' · Lote '+kxDupEsc(r.lote):''}</div>
+    </div>
+    <p style="font-size:13px;margin:0 0 8px"><strong>¿Por qué lo querés eliminar?</strong></p>
+    <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;font-size:13px">
+      <input type="radio" name="kxmp-modo" value="error" ${_kxMp.modo==='error'?'checked':''} onchange="_kxMp.modo='error';kxMpPaso1()">
+      <span><strong>Se cargó por error</strong> — esa compra no existió o está cargada dos veces.<br><span style="opacity:.75">Se borra el ingreso y se descuentan los ${fmtN(a.cant)} ${u} del stock.</span></span></label>
+    <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:10px;cursor:pointer;font-size:13px">
+      <input type="radio" name="kxmp-modo" value="real" ${_kxMp.modo==='real'?'checked':''} onchange="_kxMp.modo='real';kxMpPaso1()">
+      <span><strong>Es una compra real, pero el producto está mal escrito o duplicado</strong><br><span style="opacity:.75">No se borra la compra: se pasa, con sus kilos, al producto correcto.</span></span></label>
+    <div id="kxmp-det" style="margin-top:12px"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="cerrarModal('modal-kx-dup')">Cancelar</button>
+      <button class="btn-primary" id="kxmp-sig" disabled>Continuar →</button></div>`;
+  const det = document.getElementById('kxmp-det'), sig = document.getElementById('kxmp-sig');
+  if(_kxMp.modo==='error'){
+    const li = [];
+    if(!a.ins) li.push('El producto ya no está en Stock Actual: solo se borra el ingreso.');
+    else if(a.yaDescontado) li.push(`Este lote estaba marcado "A decomiso": el stock ya se había descontado, queda en ${fmtN(a.stockAntes)} ${u}.`);
+    else li.push(`Stock de "${kxDupEsc(a.ins.desc)}": ${fmtN(a.stockAntes)} → <strong>${fmtN(a.stockDespues)} ${u}</strong>`);
+    if(a.faltaStock) li.push(`⚠️ Hoy hay menos stock (${fmtN(a.stockAntes)}) que lo que dice el ingreso (${fmtN(a.cant)}): queda en 0.`);
+    li.push('Queda anotado en el kardex como "Corrección de ingreso" (no cuenta como pérdida).');
+    if(a.borraInsumo) li.push(`Como "${kxDupEsc(a.ins.desc)}" no tiene otras compras ni se usa en recetas, <strong>también se elimina de Stock Actual</strong>.`);
+    else if(a.ins && a.refs.recetas.length) li.push(`"${kxDupEsc(a.ins.desc)}" sigue existiendo porque se usa en ${a.refs.recetas.length} receta(s).`);
+    else if(a.ins && a.otrosIngresos) li.push(`"${kxDupEsc(a.ins.desc)}" sigue existiendo porque tiene ${a.otrosIngresos} compra(s) más.`);
+    det.innerHTML = `<div style="background:var(--vapor,#faf5ec);border-radius:8px;padding:10px 14px;font-size:13px"><ul style="margin:0 0 0 18px;padding:0">${li.map(x=>'<li>'+x+'</li>').join('')}</ul>
+      <div style="margin-top:6px;font-size:12px;opacity:.8">Antes se guarda un backup automático y queda registrado en Auditoría.</div></div>`;
+    sig.disabled = false; sig.onclick = kxMpPaso2;
+  } else if(_kxMp.modo==='real'){
+    det.innerHTML = `<div style="background:var(--vapor,#faf5ec);border-radius:8px;padding:10px 14px;font-size:13px">Vas a elegir el producto correcto. La compra, el stock, el kardex y las recetas de "${kxDupEsc(r.desc)}" pasan a ese producto y después se elimina el mal escrito.</div>`;
+    sig.disabled = !a.ins; sig.textContent = '🔗 Elegir el producto correcto →';
+    sig.onclick = ()=>{ _kxDup = { B:r.id, A:'', paso:1 }; kxDupInicio(); };
+  }
+}
+function kxMpPaso2(){
+  const r = kxMpBuscar(); if(!r) return;
+  document.getElementById('kxdup-tit').textContent = 'Paso 2 de 3 — Confirmar el nombre';
+  document.getElementById('kxdup-body').innerHTML = `
+    <p style="font-size:13px">Para confirmar, escribí el nombre del producto de este ingreso, tal como está:</p>
+    <div style="font-weight:800;font-size:15px;margin:6px 0 10px;color:var(--alerta,#c0392b)">${kxDupEsc(r.desc)}</div>
+    <input id="kxmp-conf" type="text" autocomplete="off" style="width:100%">
+    <label style="display:block;font-size:12px;font-weight:700;margin-top:12px">Motivo *</label>
+    <input id="kxmp-mot" type="text" style="width:100%" placeholder="Ej: cargado dos veces el 03/08">
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="kxMpPaso1()">← Volver</button>
+      <button class="btn-primary" id="kxmp-sig2" disabled>Continuar →</button></div>`;
+  const conf=document.getElementById('kxmp-conf'), mot=document.getElementById('kxmp-mot'), sig=document.getElementById('kxmp-sig2');
+  const val=()=>{ sig.disabled = !(kxNomNorm(conf.value)===kxNomNorm(r.desc) && mot.value.trim()); };
+  conf.oninput=val; mot.oninput=val;
+  sig.onclick=()=>{ _kxMp.motivo = mot.value.trim(); kxMpPaso3(); };
+  setTimeout(()=>conf.focus(),50);
+}
+function kxMpPaso3(){
+  const r = kxMpBuscar(); if(!r) return; const a = kxMpAnalisis(r);
+  document.getElementById('kxdup-tit').textContent = 'Paso 3 de 3 — Confirmación final';
+  document.getElementById('kxdup-body').innerHTML = `
+    <div style="background:#fdecea;border-radius:10px;padding:14px;font-size:14px;line-height:1.5">
+      Se va a <strong>eliminar definitivamente</strong> el ingreso de ${fmtN(a.cant)} ${kxDupEsc(r.uom||a.ins?.uom||'')} de "${kxDupEsc(r.desc)}" del ${r.fecha?r.fecha.split('-').reverse().join('/'):'—'}${a.ins&&!a.yaDescontado?`, y el stock queda en ${fmtN(a.stockDespues)}`:''}${a.borraInsumo?'. El producto también sale de Stock Actual':''}, en todas las PC.
+      <br>No se deshace desde acá (solo restaurando el backup automático).</div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <button class="btn-secondary" onclick="cerrarModal('modal-kx-dup')">Cancelar</button>
+      <button id="kxmp-final" onclick="kxMpEjecutar()" style="background:var(--alerta,#c0392b);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:800;cursor:pointer">🗑️ Eliminar ingreso</button></div>`;
+}
+function kxEliminarIngreso(r, motivo){
+  const a = kxMpAnalisis(r), ahora = Date.now();
+  kxBackupAntesDe('eliminar-ingreso');
+  const antes = kxSnapshotStock();
+  if(a.ins && !a.yaDescontado){ a.ins.stock = a.stockDespues; a.ins._ts = ahora; }
+  DB.materiaPrima = DB.materiaPrima.filter(x=>x!==r);
+  try{ kxRegistrarDiferencias(antes, { fecha:kxHoy(), org:'correccion', tipo:'ingreso', ref: r.lote?'Lote '+r.lote:'',
+        nota:`Ingreso del ${r.fecha||'—'} eliminado: ${motivo}` }); }catch(e){ console.warn('Kardex:', e); }
+  registrarAuditoria('Eliminación', `Ingreso Materia Prima ${r.id} — ${r.desc} (${r.fecha||'—'})`,
+    `Motivo: "${motivo}". Datos eliminados: ${fmtN(a.cant)} ${r.uom||''} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · Proveedor ${r.proveedor||'—'} · Lote ${r.lote||'—'}.`+
+    (a.ins ? ` Stock ${fmtN(a.stockAntes)} → ${fmtN(a.ins.stock)}.` : '') + (a.borraInsumo ? ' El producto también se eliminó de Stock Actual.' : ''));
+  if(a.borraInsumo){
+    DB.inventario = DB.inventario.filter(i=>i.id!==a.ins.id);
+    kxRegistrarEliminado('inventario', a.ins.id, a.ins.desc, Infinity);
+  }
+  guardarEnStorage(); _kxSnap = kxFoto();
+  return a;
+}
+function kxMpEjecutar(){
+  const r = kxMpBuscar(); if(!r){ toast('⚠️ El ingreso ya no existe','error'); return; }
+  try{
+    const a = kxEliminarIngreso(r, _kxMp.motivo||'cargado por error');
+    cerrarModal('modal-kx-dup');
+    toast(`🗑️ Ingreso de "${r.desc}" eliminado${a.borraInsumo?' · producto quitado de Stock':''}`,'success');
+    try{ renderMateriaPrima(); }catch(_){} try{ renderInventario(); }catch(_){} try{ renderDashboard(); }catch(_){}
+    try{ kxRefrescarReponer(); }catch(_){}
+    try{ sincronizarNube(true); }catch(_){}
+  }catch(e){ toast('⚠️ '+e.message,'error'); }
+}
+
+// Botón 🗑️ en el pie del lápiz ✏️ (solo Dueño, Administrador y Programador)
+(function(){
+  const ab = window.abrirEditarMateriaPrima;
+  window.abrirEditarMateriaPrima = abrirEditarMateriaPrima = function(...x){
+    const res = ab.apply(this, x);
+    try{
+      const pie = document.querySelector('#modal-editar-materia .modal-footer');
+      let b = document.getElementById('kxmp-btn');
+      if(pie && !b){
+        b = document.createElement('button'); b.id='kxmp-btn'; b.type='button'; b.textContent='🗑️ Eliminar ingreso';
+        b.style.cssText='margin-right:auto;background:transparent;color:var(--alerta,#c0392b);border:1.5px solid var(--alerta,#c0392b);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer';
+        b.onclick = kxMpEliminarAbrir; pie.insertBefore(b, pie.firstChild);
+        pie.style.display = pie.style.display || 'flex';
+      }
+      if(b) b.style.display = kxPuedeUnificar() ? '' : 'none';
+    }catch(e){ console.warn(e); }
+    return res;
+  };
+  // Las correcciones hechas con el lápiz ahora ganan en la sincronización (antes podían volver al valor viejo)
+  const ge = window.guardarEdicionMateriaPrima;
+  window.guardarEdicionMateriaPrima = guardarEdicionMateriaPrima = function(...x){
+    const r = DB.materiaPrima[materiaPrimaEditandoIdx];
+    const res = ge.apply(this, x);
+    try{
+      const cerrado = !document.getElementById('modal-editar-materia').classList.contains('open');
+      if(r && cerrado){ const t=Date.now(); if(!r.mpId) r.mpId=kxClaveMP(r); r._ts=t; const i=getInsumo(r.id); if(i) i._ts=t; guardarEnStorage(); }
+    }catch(_){}
+    return res;
+  };
+})();
 
 </script>
 </body>
