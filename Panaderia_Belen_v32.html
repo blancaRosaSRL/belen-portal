@@ -1035,6 +1035,9 @@
         <button class="nav-btn" onclick="showPage('materia',this)">
           <span class="icon">🌾</span> Materia Prima
         </button>
+        <button class="nav-btn" onclick="showPage('recetas',this)">
+          <span class="icon">📋</span> Recetas
+        </button>
         <button class="nav-btn" onclick="showPage('proveedores',this)">
           <span class="icon">🏪</span> Proveedores
         </button>
@@ -1051,9 +1054,6 @@
         <button class="nav-btn" onclick="showPage('inventario',this)">
           <span class="icon">📦</span> Stock Actual
           <span class="nav-badge" id="badge-stock">0</span>
-        </button>
-        <button class="nav-btn" onclick="showPage('recetas',this)">
-          <span class="icon">📋</span> Recetas
         </button>
       </div>
       <div class="nav-group">
@@ -16370,6 +16370,9 @@ function kxReponerAccion(accion){
   const btnMat = document.querySelector('.nav-btn[onclick*="\'materia\'"]');
   if(btnMat) btnMat.insertAdjacentHTML('afterend',
     `<button class="nav-btn" onclick="showPage('kardex',this)"><span class="icon">📒</span> Kardex e Informe MP</button>`);
+  // v34.4: Recetas va justo debajo de Materia Prima
+  const btnRec = document.querySelector('.nav-btn[onclick*="\'recetas\'"]');
+  if(btnMat && btnRec) btnMat.insertAdjacentElement('afterend', btnRec);
 
   const tbMat = document.querySelector('#materia-tab-ingresos .toolbar');
   if(tbMat) tbMat.insertAdjacentHTML('beforeend',
@@ -17409,7 +17412,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '34.3';
+const BELEN_BUILD = '34.4';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
