@@ -17412,7 +17412,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '34.4';
+const BELEN_BUILD = '35.0';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -19380,6 +19380,494 @@ function ppHtml(sectores, fmt, fecha, libres, copias){
     if(!ref) return;
     const b = document.createElement('button'); b.id='pp-btn'; b.className='btn-secondary'; b.textContent='📝 Planilla del equipo';
     b.onclick = ppAbrir; ref.parentNode.insertBefore(b, ref.nextSibling);
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ins); else ins();
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.0 — FICHA DEL INSUMO + PRESENTACIÓN DE COMPRA (4 bolsas = 100 kg)
+//         y "Nuevo Ingreso" solo con insumos existentes (buscador)
+// ═══════════════════════════════════════════════════════════════
+const KX_PRES_TIPOS = ['Bolsa','Caja','Balde','Bidón','Pack','Paquete','Lata','Fardo','Pote','Frasco','Bandeja','Maple'];
+const KX_CATS_INS = ['Harinas','Leudantes','Grasas','Endulzantes','Condimentos','Lácteos','Frescos','Rellenos','Repostería','Semillas','Cereales','Almidones','Aditivos','Otros'];
+const KX_UOM_TXT = {kg:'kg', Un:'unidades', Lt:'litros'};
+
+function kxR(n, d){ const p = Math.pow(10, d==null?3:d); return Math.round((Number(n)||0)*p)/p; }
+function kxPres(ins){
+  const f = Number(ins && ins.presFactor)||0;
+  return (ins && ins.presNombre && f>0) ? { nom: ins.presNombre, f } : null;
+}
+function kxPlural(nom, n){
+  const s = String(nom||'').toLowerCase();
+  if(Math.abs(n)===1) return s;
+  return /[aeiouáéó]$/.test(s) ? s+'s' : s+'es';
+}
+function kxPresTxt(ins, cant){
+  const p = kxPres(ins); if(!p) return '';
+  const n = kxR((Number(cant)||0)/p.f, 2);
+  return `${fmtN(n)} ${kxPlural(p.nom, n)}`;
+}
+// Igualdad de nombres: ignora acentos, espacios y letras repetidas, pero NO los números (000 ≠ 0000)
+function kxNomExact(t){
+  return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+    .replace(/[^A-Z0-9]/g,'').replace(/([A-Z])\1+/g,'$1');
+}
+function kxInsPuedeEditar(){ return !!usuarioActual && !esSoloLecturaInventario(); }
+
+// Próximo código libre: no reutiliza códigos de insumos eliminados
+function kxInsNextId(){
+  const nums = [];
+  const add = id => { const m = /^INS(\d+)$/.exec(String(id||'')); if(m) nums.push(parseInt(m[1],10)); };
+  (DB.inventario||[]).forEach(i=>add(i.id));
+  (DB.materiaPrima||[]).forEach(r=>add(r.id));
+  (DB.eliminados||[]).forEach(t=>{ if(t && t.col==='inventario') add(t.k); });
+  return 'INS' + String(Math.max(0, ...nums) + 1).padStart(3,'0');
+}
+function kxInsParecidos(nombre, exceptoId){
+  if(!String(nombre||'').trim()) return [];
+  return (DB.inventario||[]).filter(i=>i.id!==exceptoId)
+    .map(i=>({ ins:i, p: kxNomExact(i.desc)===kxNomExact(nombre) ? 1 : Math.min(0.95, kxParecido(nombre, i.desc)) }))
+    .filter(x=>x.p>=0.75).sort((a,b)=>b.p-a.p).slice(0,4);
+}
+function kxUltimaCompra(insId){
+  const l = (DB.materiaPrima||[]).filter(r=>r.id===insId && !r.decomiso);
+  l.sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||'')) || (a._ts||0)-(b._ts||0));
+  return l[l.length-1] || null;
+}
+
+// ─── FICHA DEL INSUMO (alta y edición) ──────────────────────────
+let _kxFicha = { id:null, onOk:null };
+
+function kxFichaModal(){
+  let m = document.getElementById('kx-modal-ins');
+  if(m) return m;
+  const st = 'width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:Inter,sans-serif;font-size:13px;box-sizing:border-box';
+  m = document.createElement('div');
+  m.className = 'modal-overlay'; m.id = 'kx-modal-ins';
+  m.innerHTML = `<div class="modal" style="max-width:640px">
+    <div class="modal-header"><span>🧾</span><h2 id="kxi-tit">Nuevo insumo</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-ins')">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--texto-2);margin:0 0 12px">La ficha guarda los datos que no cambian en cada compra. Las compras se cargan después, desde <strong>+ Nuevo Ingreso</strong>.</p>
+      <div class="form-grid">
+        <div class="form-group"><label>Código</label><input id="kxi-id" readonly style="${st};background:var(--miga-dk)"></div>
+        <div class="form-group"><label>Estado</label><select id="kxi-estado" style="${st}"><option>Activo</option><option>Descontinuado</option></select></div>
+        <div class="form-group span2"><label>Nombre del insumo *</label>
+          <input id="kxi-desc" autocomplete="off" placeholder="Ej: Harina 000 Morixe" style="${st}">
+          <div id="kxi-parec" style="margin-top:6px"></div></div>
+        <div class="form-group"><label>Unidad de receta y stock *</label>
+          <select id="kxi-uom" style="${st}"><option value="">Seleccionar…</option><option value="kg">kg — Kilogramos</option><option value="Un">Un — Unidades</option><option value="Lt">Lt — Litros</option></select>
+          <span class="hint" id="kxi-uom-hint"></span></div>
+        <div class="form-group"><label>Categoría *</label>
+          <select id="kxi-cat" style="${st}"><option value="">Seleccionar…</option>${KX_CATS_INS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+      </div>
+      <div style="background:var(--miga,#f6efe3);border:1.5px solid var(--trigo,#d8b27a);border-radius:10px;padding:12px 14px;margin:14px 0">
+        <div style="font-weight:800;font-size:13px;margin-bottom:8px">📦 Presentación de compra</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:150px"><label style="font-size:11px;font-weight:700">Se compra en</label>
+            <select id="kxi-ptipo" style="${st}"><option value="">Suelto (sin presentación)</option>${KX_PRES_TIPOS.map(t=>`<option>${t}</option>`).join('')}<option value="__otra">Otra…</option></select></div>
+          <div id="kxi-potra-w" style="flex:1;min-width:130px;display:none"><label style="font-size:11px;font-weight:700">¿Cuál?</label>
+            <input id="kxi-potra" placeholder="Ej: Tambor" style="${st}"></div>
+          <div id="kxi-pf-w" style="flex:1;min-width:160px"><label style="font-size:11px;font-weight:700" id="kxi-pf-lab">Cada una trae</label>
+            <div style="display:flex;gap:6px;align-items:center"><input id="kxi-pf" type="number" step="0.001" min="0" placeholder="25" style="${st}"><strong id="kxi-pf-uom">kg</strong></div></div>
+        </div>
+        <div id="kxi-ej" style="font-size:13px;margin-top:8px;color:var(--texto-2)"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label>Stock mínimo</label><input id="kxi-min" type="number" step="0.001" min="0" style="${st}"><span class="hint" id="kxi-min-eq"></span></div>
+        <div class="form-group"><label>Stock máximo</label><input id="kxi-max" type="number" step="0.001" min="0" style="${st}"><span class="hint" id="kxi-max-eq"></span></div>
+        <div class="form-group span2"><label>Proveedor habitual</label><select id="kxi-prov" style="${st}"></select></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="cerrarModal('kx-modal-ins')">Cancelar</button>
+      <button class="btn-primary" id="kxi-ok" onclick="kxFichaGuardar()">✅ Guardar ficha</button>
+    </div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  ['kxi-uom','kxi-ptipo','kxi-potra','kxi-pf','kxi-min','kxi-max'].forEach(id=>{
+    const el = document.getElementById(id); el.addEventListener('input', kxFichaEjemplo); el.addEventListener('change', kxFichaEjemplo);
+  });
+  document.getElementById('kxi-desc').addEventListener('input', kxFichaParecidos);
+  return m;
+}
+
+function kxFichaPresLeida(){
+  const t = kxVal('kxi-ptipo');
+  const nom = t==='__otra' ? kxVal('kxi-potra').trim() : t;
+  const f = parseFloat(kxVal('kxi-pf'))||0;
+  return { nom, f, activa: !!t };
+}
+function kxFichaEjemplo(){
+  const t = kxVal('kxi-ptipo');
+  document.getElementById('kxi-potra-w').style.display = t==='__otra' ? '' : 'none';
+  document.getElementById('kxi-pf-w').style.display = t ? '' : 'none';
+  const uom = kxVal('kxi-uom') || 'kg';
+  document.getElementById('kxi-pf-uom').textContent = uom;
+  const p = kxFichaPresLeida();
+  document.getElementById('kxi-pf-lab').textContent = p.nom ? `Cada ${p.nom.toLowerCase()} trae` : 'Cada una trae';
+  const ej = document.getElementById('kxi-ej');
+  const fake = { presNombre:p.nom, presFactor:p.f };
+  if(p.activa && p.nom && p.f>0){
+    ej.innerHTML = `Ejemplo: <strong>4 ${kxPlural(p.nom,4)} = ${fmtN(kxR(4*p.f))} ${uom}</strong> &nbsp;·&nbsp; y al revés: <strong>${fmtN(kxR(10*p.f))} ${uom} = 10 ${kxPlural(p.nom,10)}</strong>`;
+  } else ej.textContent = p.activa ? 'Completá cuánto trae cada una para ver la conversión.' : 'Sin presentación: las compras se cargan directamente en ' + (KX_UOM_TXT[uom]||uom) + '.';
+  ['min','max'].forEach(k=>{
+    const v = parseFloat(kxVal('kxi-'+k))||0;
+    document.getElementById(`kxi-${k}-eq`).textContent = (p.nom && p.f>0 && v>0) ? `= ${kxPresTxt(fake, v)}` : '';
+  });
+}
+function kxFichaParecidos(){
+  const box = document.getElementById('kxi-parec');
+  const l = kxInsParecidos(kxVal('kxi-desc'), _kxFicha.id);
+  if(!l.length){ box.innerHTML=''; return; }
+  box.innerHTML = `<div style="background:#fff4e5;border:1px solid #f0c27a;border-radius:8px;padding:8px 10px;font-size:12px">
+    <strong>⚠️ ¿Es alguno de estos?</strong> Ya existen insumos con nombre parecido:
+    ${l.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:5px">
+      <span><span class="mono">${x.ins.id}</span> · ${kxEsc(x.ins.desc)} (${kxEsc(x.ins.uom||'')}) · <em>${Math.round(x.p*100)}% parecido</em></span>
+      <button class="btn-secondary" style="padding:3px 9px;font-size:11px" onclick="kxFichaUsarExistente('${x.ins.id}')">Usar este</button></div>`).join('')}
+  </div>`;
+}
+function kxFichaUsarExistente(id){
+  cerrarModal('kx-modal-ins');
+  const cb = _kxFicha.onOk; _kxFicha = { id:null, onOk:null };
+  if(cb) cb(getInsumo(id)); else kxFichaAbrir(id);
+}
+
+function kxFichaAbrir(id, opts){
+  opts = opts || {};
+  if(!kxInsPuedeEditar()){ toast('🔒 Tu rol solo puede ver el inventario','error'); return; }
+  kxFichaModal();
+  const ins = id ? getInsumo(id) : null;
+  _kxFicha = { id: ins ? ins.id : null, onOk: opts.onOk || null };
+  const set = (k,v)=>{ document.getElementById(k).value = v==null ? '' : v; };
+  document.getElementById('kxi-tit').textContent = ins ? `Ficha del insumo — ${ins.desc}` : 'Nuevo insumo';
+  document.getElementById('kxi-ok').textContent = ins ? '✅ Guardar cambios' : '✅ Crear insumo';
+  set('kxi-id', ins ? ins.id : kxInsNextId() + ' (se confirma al guardar)');
+  set('kxi-desc', ins ? ins.desc : (opts.desc||''));
+  set('kxi-uom', ins ? ins.uom : '');
+  set('kxi-cat', ins ? ins.cat : '');
+  set('kxi-estado', ins ? (ins.estado||'Activo') : 'Activo');
+  set('kxi-min', ins && ins.min ? ins.min : '');
+  set('kxi-max', ins && ins.max ? ins.max : '');
+  const pn = ins && ins.presNombre || '';
+  const esLista = KX_PRES_TIPOS.includes(pn);
+  set('kxi-ptipo', !pn ? '' : esLista ? pn : '__otra');
+  set('kxi-potra', pn && !esLista ? pn : '');
+  set('kxi-pf', ins && ins.presFactor ? ins.presFactor : '');
+  const prov = document.getElementById('kxi-prov');
+  prov.innerHTML = '<option value="">— Sin definir —</option>' + (DB.proveedores||[]).filter(p=>p.estado!=='Inactivo').map(p=>`<option>${kxEsc(p.razon)}</option>`).join('');
+  prov.value = ins && ins.provHab || '';
+  // La unidad no se cambia si ya hay stock o compras: se corregiría todo el historial
+  const bloqUom = !!ins && ((Number(ins.stock)||0)!==0 || (DB.materiaPrima||[]).some(r=>r.id===ins.id));
+  document.getElementById('kxi-uom').disabled = bloqUom;
+  document.getElementById('kxi-uom-hint').textContent = bloqUom ? 'No se puede cambiar: ya tiene stock o compras cargadas.' : 'Es la unidad en que se usa en las recetas.';
+  kxFichaEjemplo(); kxFichaParecidos();
+  abrirModal('kx-modal-ins');
+  setTimeout(()=>document.getElementById(ins?'kxi-ptipo':'kxi-desc').focus(), 80);
+}
+
+function kxFichaGuardar(){
+  const desc = kxVal('kxi-desc').trim().replace(/\s+/g,' ');
+  const uom = kxVal('kxi-uom'), cat = kxVal('kxi-cat');
+  const p = kxFichaPresLeida();
+  const min = parseFloat(kxVal('kxi-min'))||0, max = parseFloat(kxVal('kxi-max'))||0;
+  if(!desc || !uom || !cat){ toast('⚠️ Completá nombre, unidad y categoría','error'); return; }
+  if(p.activa && (!p.nom || !(p.f>0))){ toast('⚠️ Indicá la presentación y cuánto trae cada una (mayor a 0)','error'); return; }
+  if(max && min && max < min){ toast('⚠️ El stock máximo no puede ser menor que el mínimo','error'); return; }
+  const igual = (DB.inventario||[]).find(i=>i.id!==_kxFicha.id && kxNomExact(i.desc)===kxNomExact(desc));
+  if(igual){ toast(`⚠️ Ya existe "${igual.desc}" (${igual.id}). Usá ese insumo.`,'error'); kxFichaParecidos(); return; }
+  const parec = kxInsParecidos(desc, _kxFicha.id).filter(x=>x.p>=0.8);
+  if(!_kxFicha.id && parec.length && !confirm(`Hay insumos con nombre muy parecido:\n\n${parec.map(x=>'• '+x.ins.id+' — '+x.ins.desc).join('\n')}\n\n¿Seguro que "${desc}" es un insumo distinto?`)) return;
+
+  const ahora = Date.now();
+  const pres = p.activa ? { presNombre:p.nom, presFactor:kxR(p.f,4) } : { presNombre:'', presFactor:0 };
+  let ins;
+  if(_kxFicha.id){
+    ins = getInsumo(_kxFicha.id); if(!ins) return;
+    const cambios = [];
+    const cmp = (k, v, lab)=>{ if(String(ins[k]==null?'':ins[k]) !== String(v==null?'':v)){ cambios.push(`${lab}: ${ins[k]||'—'} → ${v||'—'}`); ins[k]=v; } };
+    cmp('desc', desc, 'Nombre'); if(!document.getElementById('kxi-uom').disabled) cmp('uom', uom, 'Unidad');
+    cmp('cat', cat, 'Categoría'); cmp('estado', kxVal('kxi-estado'), 'Estado');
+    cmp('min', min, 'Mínimo'); cmp('max', max, 'Máximo');
+    cmp('presNombre', pres.presNombre, 'Presentación'); cmp('presFactor', pres.presFactor, 'Trae'); cmp('provHab', kxVal('kxi-prov'), 'Proveedor habitual');
+    if(!cambios.length){ cerrarModal('kx-modal-ins'); toast('ℹ️ Sin cambios','success'); return; }
+    stampearRegistro(ins); ins._ts = ahora;
+    registrarAuditoria('Modificación', `Ficha ${ins.id} — ${ins.desc}`, cambios.join(' · '));
+    toast(`✅ Ficha de ${ins.desc} actualizada`,'success');
+  } else {
+    const id = kxInsNextId();
+    ins = { id, desc, cat, uom, stock:0, min, max, precio:0, estado:kxVal('kxi-estado')||'Activo', provHab:kxVal('kxi-prov'), ...pres };
+    stampearRegistro(ins); ins._ts = ahora;
+    DB.inventario.push(ins);
+    registrarAuditoria('Creación', `Insumo ${id} — ${desc}`,
+      `Unidad ${uom} · ${cat}` + (pres.presNombre ? ` · Presentación: ${pres.presNombre} de ${fmtN(pres.presFactor)} ${uom}` : ' · Sin presentación'));
+    toast(`✅ Insumo creado: ${id} — ${desc}`,'success');
+  }
+  try{ encolarCambio('inventario','upsert', ins); }catch(_){}
+  guardarEnStorage();
+  try{ _kxSnap = kxFoto(); }catch(_){}
+  cerrarModal('kx-modal-ins');
+  const cb = _kxFicha.onOk; _kxFicha = { id:null, onOk:null };
+  try{ if(document.getElementById('page-inventario')?.classList.contains('active')) renderInventario(); }catch(_){}
+  if(cb) cb(ins);
+}
+
+// ─── NUEVO INGRESO: buscador obligatorio + conversión ────────────
+let _kxMpIns = null;
+
+function kxMpUI(){
+  if(document.getElementById('kxmp-chip')) return;
+  const st = 'width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:Inter,sans-serif;font-size:13px;box-sizing:border-box';
+  const h = document.querySelector('#modal-materia .modal-header h2'); if(h) h.textContent = 'Nuevo Ingreso — registrar una compra';
+  const idIn = document.getElementById('mp-id');
+  idIn.closest('.form-group').querySelector('label').textContent = 'Código';
+  const desc = document.getElementById('mp-desc');
+  desc.removeAttribute('list');
+  desc.placeholder = 'Buscá el insumo por nombre o código…';
+  desc.setAttribute('autocomplete','off');
+  desc.closest('.form-group').querySelector('label').textContent = 'Insumo * (elegilo de la lista)';
+  const g = desc.closest('.form-group'); g.style.position = 'relative';
+  g.insertAdjacentHTML('beforeend', `<div id="kxmp-lista" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:50;background:#fff;border:1.5px solid var(--trigo,#d8b27a);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow:auto"></div>
+    <div id="kxmp-chip" style="margin-top:6px;font-size:12px"></div>`);
+  // Unidad y categoría vienen de la ficha
+  ['mp-uom','mp-categoria'].forEach(id=>{ const e=document.getElementById(id); e.disabled = true; e.title='Se toma de la ficha del insumo'; });
+  // Mínimo y máximo se editan en la ficha, no en cada compra
+  ['mp-stockmin','mp-stockmax'].forEach(id=>{ const e=document.getElementById(id); if(e) e.closest('.form-group').style.display='none'; });
+  // Conversión por presentación, junto a la cantidad
+  const cg = document.getElementById('mp-cantidad').closest('.form-group');
+  cg.insertAdjacentHTML('beforebegin', `<div class="form-group" id="kxmp-pres-g" style="display:none">
+      <label id="kxmp-pres-lab">Cantidad en bolsas</label>
+      <input type="number" id="kxmp-pres" step="0.001" min="0" placeholder="0" style="${st};font-weight:700">
+      <span class="hint" id="kxmp-pres-hint"></span></div>`);
+  cg.querySelector('label').id = 'kxmp-cant-lab';
+  const iva = document.querySelector('#modal-materia .iva-row');
+  iva.style.flexWrap = 'wrap';
+  iva.insertAdjacentHTML('afterbegin', `<div class="form-group" id="kxmp-pp-g" style="display:none;min-width:130px">
+      <label id="kxmp-pp-lab">$ por bolsa sin IVA</label>
+      <input type="number" id="kxmp-pp" step="0.01" min="0" placeholder="0.00"></div>`);
+  document.querySelector('#modal-materia .modal-footer').insertAdjacentHTML('beforebegin',
+    `<div id="kxmp-prev" style="margin:0 20px 12px;padding:10px 12px;border-radius:8px;background:var(--miga,#f6efe3);font-size:13px;display:none"></div>`);
+
+  desc.addEventListener('input', ()=>{
+    if(_kxMpIns && desc.value.trim() !== _kxMpIns.desc) kxMpDeseleccionar();
+    kxMpLista();
+  });
+  desc.addEventListener('focus', kxMpLista);
+  desc.addEventListener('change', ()=>{
+    if(_kxMpIns) return;
+    const q = desc.value.trim(); if(!q) return;
+    const ex = (DB.inventario||[]).find(i=>kxNomExact(i.desc)===kxNomExact(q) || String(i.id).toUpperCase()===q.toUpperCase());
+    if(ex) kxMpSeleccionar(ex.id);
+  });
+  desc.addEventListener('keydown', e=>{
+    const l = document.getElementById('kxmp-lista'); const it = [...l.querySelectorAll('[data-i]')];
+    if(l.style.display==='none' || !it.length) return;
+    let k = it.findIndex(x=>x.dataset.act==='1');
+    if(e.key==='ArrowDown' || e.key==='ArrowUp'){ e.preventDefault(); k = e.key==='ArrowDown' ? Math.min(it.length-1,k+1) : Math.max(0,k-1);
+      it.forEach((x,j)=>{ x.dataset.act = j===k?'1':''; x.style.background = j===k?'var(--miga,#f6efe3)':''; }); }
+    else if(e.key==='Enter'){ e.preventDefault(); (it[k>=0?k:0]).click(); }
+    else if(e.key==='Escape'){ l.style.display='none'; }
+  });
+  document.addEventListener('click', e=>{ const l=document.getElementById('kxmp-lista'); if(l && !g.contains(e.target)) l.style.display='none'; });
+
+  // Conversión en los dos sentidos
+  const pres = document.getElementById('kxmp-pres'), cant = document.getElementById('mp-cantidad');
+  const pp = document.getElementById('kxmp-pp'), sin = document.getElementById('mp-siniva'), con = document.getElementById('mp-coniva');
+  pres.addEventListener('input', ()=>{ const p=kxPres(_kxMpIns); if(!p) return; cant.value = pres.value==='' ? '' : kxR((parseFloat(pres.value)||0)*p.f); kxMpPrev(); });
+  cant.addEventListener('input', ()=>{ const p=kxPres(_kxMpIns); if(p) pres.value = cant.value==='' ? '' : kxR((parseFloat(cant.value)||0)/p.f); kxMpPrev(); });
+  pp.addEventListener('input', ()=>{ const p=kxPres(_kxMpIns); if(!p) return; sin.value = pp.value==='' ? '' : kxR((parseFloat(pp.value)||0)/p.f, 4); con.value=''; try{ calcularIVA(); }catch(_){} kxMpPrev(); });
+  sin.addEventListener('input', ()=>{ const p=kxPres(_kxMpIns); if(p) pp.value = sin.value==='' ? '' : kxR((parseFloat(sin.value)||0)*p.f, 2); kxMpPrev(); });
+}
+
+function kxMpLista(){
+  const l = document.getElementById('kxmp-lista'); if(!l) return;
+  const q = kxVal('mp-desc').trim();
+  if(_kxMpIns && q===_kxMpIns.desc){ l.style.display='none'; return; }
+  const qn = kxNomExact(q), qw = q.toUpperCase();
+  let res = (DB.inventario||[]).filter(i=>(i.estado||'Activo')!=='Descontinuado');
+  if(q){
+    res = res.map(i=>{
+      const d = kxNomExact(i.desc);
+      let s = String(i.id).toUpperCase()===qw ? 3 : d.startsWith(qn) ? 2 : d.includes(qn) || String(i.id).toUpperCase().includes(qw) ? 1.5 : kxParecido(q, i.desc);
+      return { i, s };
+    }).filter(x=>x.s>=0.6).sort((a,b)=>b.s-a.s).map(x=>x.i);
+  } else res = res.slice().sort((a,b)=>String(a.desc).localeCompare(String(b.desc)));
+  res = res.slice(0, 8);
+  const fila = i => {
+    const u = kxUltimaCompra(i.id); const p = kxPres(i);
+    return `<div data-i="${i.id}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--borde,#eee)" onmousedown="event.preventDefault()" onclick="kxMpSeleccionar('${i.id}')">
+      <div><span class="mono" style="font-size:11px">${i.id}</span> · <strong>${kxEsc(i.desc)}</strong> <span style="color:var(--texto-2)">(${kxEsc(i.uom||'')})</span></div>
+      <div style="font-size:11px;color:var(--texto-2)">Stock ${fmtN(i.stock)} ${kxEsc(i.uom||'')}${p?` = ${kxPresTxt(i,i.stock)}`:''}${u?` · última compra ${fmt$(u.sinIVA)} · ${kxEsc(u.proveedor||'')}`:''}</div></div>`;
+  };
+  const puede = kxInsPuedeEditar();
+  l.innerHTML = (res.length ? res.map(fila).join('') : `<div style="padding:10px;font-size:12px;color:var(--texto-2)">No hay ningún insumo con ese nombre.</div>`)
+    + (puede ? `<div data-i="__nuevo" style="padding:9px 10px;cursor:pointer;font-weight:700;color:var(--horno,#a34e17)" onmousedown="event.preventDefault()" onclick="kxMpCrearNuevo()">➕ Crear insumo nuevo${q?` "${kxEsc(q)}"`:''}</div>` : '');
+  l.style.display = '';
+}
+
+function kxMpSeleccionar(id){
+  const ins = getInsumo(id); if(!ins) return;
+  _kxMpIns = ins;
+  const set = (k,v)=>{ const e=document.getElementById(k); if(e) e.value = v==null?'':v; };
+  set('mp-id', ins.id); set('mp-desc', ins.desc); set('mp-uom', ins.uom||''); set('mp-categoria', ins.cat||'Otros');
+  if(!document.getElementById('mp-categoria').value) set('mp-categoria','Otros');
+  const prov = document.getElementById('mp-proveedor'); const u = kxUltimaCompra(ins.id);
+  if(prov && !prov.value){ const pv = ins.provHab || (u && u.proveedor) || ''; if([...prov.options].some(o=>o.value===pv)) prov.value = pv; }
+  document.getElementById('kxmp-lista').style.display = 'none';
+  const p = kxPres(ins); const uom = ins.uom||'';
+  document.getElementById('kxmp-chip').innerHTML = `<span style="background:#e6f4ea;border-radius:6px;padding:4px 8px;display:inline-block">✅ <span class="mono">${ins.id}</span> · stock ${fmtN(ins.stock)} ${kxEsc(uom)}${p?` (${kxPresTxt(ins,ins.stock)})`:''}${p?` · ${kxEsc(p.nom)} de ${fmtN(p.f)} ${kxEsc(uom)}`:''}</span>
+    ${kxInsPuedeEditar()?` <a href="#" onclick="event.preventDefault();kxMpEditarFicha()" style="font-size:12px">✏️ Ficha${p?'':' · agregar presentación (ej. bolsa de 25 kg)'}</a>`:''}`;
+  document.getElementById('kxmp-pres-g').style.display = p ? '' : 'none';
+  document.getElementById('kxmp-pp-g').style.display = p ? '' : 'none';
+  document.getElementById('kxmp-cant-lab').textContent = `Cantidad en ${KX_UOM_TXT[uom]||uom||'unidades'} *`;
+  if(p){
+    document.getElementById('kxmp-pres-lab').textContent = `Cantidad en ${kxPlural(p.nom,2)}`;
+    document.getElementById('kxmp-pres-hint').textContent = `1 ${p.nom.toLowerCase()} = ${fmtN(p.f)} ${uom} · podés cargar cualquiera de los dos`;
+    document.getElementById('kxmp-pp-lab').textContent = `$ por ${p.nom.toLowerCase()} sin IVA`;
+    const c = parseFloat(kxVal('mp-cantidad')); document.getElementById('kxmp-pres').value = c>0 ? kxR(c/p.f) : '';
+    const s = parseFloat(kxVal('mp-siniva')); document.getElementById('kxmp-pp').value = s>0 ? kxR(s*p.f,2) : '';
+  } else { document.getElementById('kxmp-pres').value=''; document.getElementById('kxmp-pp').value=''; }
+  const sinLab = document.getElementById('mp-siniva').closest('.form-group').querySelector('label');
+  if(sinLab) sinLab.textContent = `$ Sin IVA por ${uom||'unidad'} *`;
+  kxMpPrev();
+}
+function kxMpDeseleccionar(){
+  _kxMpIns = null;
+  document.getElementById('mp-id').value = '';
+  ['mp-uom','mp-categoria'].forEach(k=>{ const e=document.getElementById(k); if(e) e.value=''; });
+  document.getElementById('kxmp-chip').innerHTML = '';
+  document.getElementById('kxmp-pres-g').style.display = 'none';
+  document.getElementById('kxmp-pp-g').style.display = 'none';
+  kxMpPrev();
+}
+function kxMpCrearNuevo(){
+  document.getElementById('kxmp-lista').style.display='none';
+  kxFichaAbrir(null, { desc: kxVal('mp-desc').trim(), onOk: ins=>{ if(ins) kxMpSeleccionar(ins.id); } });
+}
+function kxMpEditarFicha(){
+  if(!_kxMpIns) return;
+  kxFichaAbrir(_kxMpIns.id, { onOk: ins=>{ if(ins) kxMpSeleccionar(ins.id); } });
+}
+function kxMpPrev(){
+  const box = document.getElementById('kxmp-prev'); if(!box) return;
+  const ins = _kxMpIns; const cant = parseFloat(kxVal('mp-cantidad'))||0; const sin = parseFloat(kxVal('mp-siniva'))||0;
+  if(!ins || !(cant>0)){ box.style.display='none'; return; }
+  const uom = ins.uom||''; const st = Number(ins.stock)||0; const p = kxPres(ins);
+  let h = `📦 Stock: <strong>${fmtN(st)} → ${fmtN(kxR(st+cant))} ${kxEsc(uom)}</strong>${p?` <span style="color:var(--texto-2)">(+${kxPresTxt(ins,cant)})</span>`:''}`;
+  const ant = Number(ins.precio)||0;
+  if(sin>0){
+    const v = ant>0 ? (sin-ant)/ant*100 : null;
+    const alerta = v!==null && Math.abs(v)>30;
+    h += `<br>💲 Precio sin IVA por ${kxEsc(uom)}: ${ant>0?fmt$(ant)+' → ':''}<strong>${fmt$(sin)}</strong>` +
+      (v!==null ? ` <span style="font-weight:700;color:${alerta?'var(--alerta,#c0392b)':'var(--texto-2)'}">(${v>=0?'+':''}${v.toFixed(1)}%)</span>` : '') +
+      (alerta ? `<br><span style="color:var(--alerta,#c0392b);font-weight:700">⚠️ Cambio grande de precio: revisá si el precio es por ${kxEsc(uom)}${p?' o por '+kxEsc(p.nom.toLowerCase()):''}.</span>` : '');
+  }
+  box.innerHTML = h; box.style.display = '';
+}
+
+// Al abrir el formulario: limpiar selección y armar la interfaz
+(function(){
+  const orig = window.initFormMateria;
+  window.initFormMateria = initFormMateria = function(){
+    const r = orig.apply(this, arguments);
+    try{
+      kxMpUI();
+      document.getElementById('mp-desc').value = ''; document.getElementById('mp-desc').removeAttribute('list');
+      document.getElementById('kxmp-pres').value = ''; document.getElementById('kxmp-pp').value = '';
+      kxMpDeseleccionar();
+      const sinLab = document.getElementById('mp-siniva').closest('.form-group').querySelector('label');
+      if(sinLab) sinLab.textContent = '$ Sin IVA *';
+      document.getElementById('kxmp-cant-lab').textContent = 'Cantidad *';
+      document.getElementById('mp-id').placeholder = 'Elegí un insumo';
+      setTimeout(()=>{ if(!_kxMpIns) document.getElementById('mp-desc').focus(); }, 120);
+    }catch(e){ console.warn('v35 ingreso:', e); }
+    return r;
+  };
+})();
+
+// Abrir un ingreso con el insumo ya elegido (desde "Insumos a reponer" o precio rápido)
+(function(){
+  const orig = window.kxAbrirIngresoDe;
+  window.kxAbrirIngresoDe = kxAbrirIngresoDe = function(insId, o){
+    const r = orig.apply(this, arguments);
+    try{ if(getInsumo(insId)) kxMpSeleccionar(insId); }catch(e){ console.warn(e); }
+    return r;
+  };
+})();
+
+// Guardar: solo con insumo elegido; la compra no toca la ficha
+(function(){
+  const orig = window.guardarMateriaPrima;
+  window.guardarMateriaPrima = guardarMateriaPrima = function(){
+    const ins = getInsumo(kxVal('mp-id'));
+    if(!ins || !_kxMpIns || ins.id!==_kxMpIns.id){
+      toast('⚠️ Elegí el insumo de la lista. Si es nuevo, usá "➕ Crear insumo nuevo".','error');
+      const d = document.getElementById('mp-desc'); if(d){ d.focus(); kxMpLista(); }
+      return;
+    }
+    document.getElementById('mp-uom').value = ins.uom||'';
+    if(ins.cat) document.getElementById('mp-categoria').value = ins.cat;
+    document.getElementById('mp-stockmin').value = ''; document.getElementById('mp-stockmax').value = '';
+    const n0 = DB.materiaPrima.length;
+    const presCant = parseFloat(kxVal('kxmp-pres'))||0; const p = kxPres(ins);
+    const r = orig.apply(this, arguments);
+    try{
+      if(DB.materiaPrima.length > n0){
+        const reg = DB.materiaPrima[DB.materiaPrima.length-1];
+        if(reg && reg.id===ins.id){
+          if(!reg.mpId) reg.mpId = kxClaveMP(reg);
+          if(p){ reg.presNombre = p.nom; reg.presFactor = p.f; reg.presCant = presCant>0 ? presCant : kxR((Number(reg.cantidad)||0)/p.f); }
+          reg._ts = Date.now(); ins._ts = reg._ts;
+          guardarEnStorage();
+        }
+        _kxMpIns = null;
+      }
+    }catch(e){ console.warn('v35 guardar:', e); }
+    return r;
+  };
+})();
+
+// ─── BOTONES: Stock Actual y Materia Prima ──────────────────────
+(function(){
+  const r0 = window.renderInventario;
+  window.renderInventario = renderInventario = function(...a){
+    const r = r0.apply(this, a);
+    try{
+      const pg = document.getElementById('page-inventario');
+      const tb = pg && pg.querySelector('.toolbar');
+      let b = document.getElementById('kxi-btn-nuevo');
+      if(kxInsPuedeEditar()){
+        if(!b && tb){ b = document.createElement('button'); b.id='kxi-btn-nuevo'; b.className='btn-primary'; b.textContent='➕ Nuevo insumo'; b.onclick=()=>kxFichaAbrir(null); tb.appendChild(b); }
+      } else if(b) b.remove();
+      document.querySelectorAll('#tbl-inventario tr').forEach(tr=>{
+        const td = tr.querySelector('td'); if(!td) return;
+        const ins = getInsumo((td.textContent||'').trim()); if(!ins) return;
+        const p = kxPres(ins);
+        if(p && !tr.querySelector('.kxi-pres')){
+          tr.children[3]?.insertAdjacentHTML('beforeend', `<div class="kxi-pres" style="font-size:10px;color:var(--texto-2);white-space:nowrap">${kxEsc(p.nom)} × ${fmtN(p.f)}</div>`);
+          tr.children[4]?.insertAdjacentHTML('beforeend', `<div class="kxi-pres" style="font-size:10px;color:var(--texto-2)">= ${kxPresTxt(ins, ins.stock)}</div>`);
+        }
+        if(kxInsPuedeEditar() && !tr.querySelector('.kxi-edit')){
+          const e = document.createElement('button'); e.className='btn-secondary kxi-edit'; e.title='Ficha del insumo'; e.textContent='✏️';
+          e.style.cssText='padding:3px 7px;margin-left:4px'; e.onclick=ev=>{ ev.stopPropagation(); kxFichaAbrir(ins.id); };
+          tr.lastElementChild.appendChild(e);
+        }
+      });
+    }catch(e){ console.warn('v35 inventario:', e); }
+    return r;
+  };
+})();
+(function(){
+  const ins = ()=>{
+    const pg = document.getElementById('page-materia'); if(!pg || document.getElementById('kxi-btn-mp')) return;
+    const nb = [...pg.querySelectorAll('button')].find(b=>(b.getAttribute('onclick')||'').includes("abrirModal('modal-materia')"));
+    if(!nb) return;
+    const b = document.createElement('button'); b.id='kxi-btn-mp'; b.className='btn-secondary'; b.textContent='➕ Nuevo insumo';
+    b.onclick = ()=>kxFichaAbrir(null); nb.parentNode.insertBefore(b, nb);
+    const hp = pg.querySelector('.page-hero p');
+    if(hp) hp.textContent = 'Cada compra se registra sobre un insumo ya creado · El stock se actualiza solo · Los insumos nuevos se crean con ➕ Nuevo insumo';
   };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ins); else ins();
 })();
