@@ -16512,6 +16512,7 @@ function kxReponerAccion(accion){
               <option value="merma">⚠️ Merma / pérdida</option>
               <option value="conteo">🔢 Conteo físico (stock real)</option>
               <option value="egreso">📤 Egreso (uso fuera de orden)</option>
+<option value="ingreso">📥 Ingreso sin factura (donación, devolución, traslado)</option>
               <option value="ajuste">⚖️ Ajuste correctivo (+/−)</option>
             </select></div>
           <div class="form-group" id="kx-mv-motivo-wrap"><label>Motivo de la merma *</label>
@@ -16698,6 +16699,7 @@ function kxCalcDeltaManual(ins, tipo, cant){
   const stock = Number(ins.stock)||0;
   if(tipo==='conteo') return +(Math.max(0,cant) - stock).toFixed(4);
   if(tipo==='ajuste') return +cant;
+  if(tipo==='ingreso') return +Math.abs(cant);
   return -Math.abs(cant);
 }
 function kxMovInfo(){
@@ -16710,7 +16712,7 @@ function kxMovInfo(){
   if(tipo==='conteo' && ins && iniChk.dataset.ins !== ins.id){ iniChk.dataset.ins = ins.id; iniChk.checked = !kxTieneConteo(ins.id); }
   document.getElementById('kx-mv-cant-label').textContent =
     tipo==='conteo' ? 'Stock contado físicamente *' : tipo==='ajuste' ? 'Cantidad (+ suma, − resta) *' : 'Cantidad *';
-  document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : 'Nota';
+  document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : tipo==='ingreso' ? '¿De dónde vino? (donación, devolución, traslado…) *' : 'Nota';
   document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtN(ins.stock)} ${ins.uom||''} · $${fmtN(ins.precio)} sin IVA` : '';
   const prev = document.getElementById('kx-mv-preview');
   if(!ins || isNaN(cant)){ prev.innerHTML = 'Elegí el insumo y la cantidad para ver el efecto.'; return; }
@@ -16736,6 +16738,7 @@ function kxGuardarMovManual(){
   if(isNaN(cant) || (tipo!=='conteo' && cant===0) || (tipo!=='ajuste' && cant<0)){ toast('⚠️ Ingresá una cantidad válida','error'); return; }
   if(kxFechaBloqueada(fecha)){ kxAvisoBloqueo(fecha); return; }
   if(tipo==='ajuste' && !nota){ toast('⚠️ En un ajuste correctivo explicá qué corrige','error'); return; }
+  if(tipo==='ingreso' && !nota){ toast('⚠️ Contá de dónde vino la mercadería','error'); return; }
   if(fecha > kxHoy()){ toast('⚠️ La fecha no puede ser futura','error'); return; }
 
   const stockAntes = Number(ins.stock)||0;
@@ -16754,7 +16757,7 @@ function kxGuardarMovManual(){
   kxGuardarMovs([kxNuevoMov({fecha, ins, tipo:tipoKx, org, mot: tipo==='merma'?kxVal('kx-mv-motivo'):'', d, cu:ins.precio, sd, ref,
     nota: tipo==='conteo' ? `${esInicial?'Inventario inicial':'Conteo'}: ${fmtN(cant)} · sistema: ${fmtN(stockAntes)}${nota?' · '+nota:''}` : nota})]);
   registrarAuditoria('Modificación', `Kardex ${ins.id} — ${ins.desc}`,
-    `${esInicial?'Inventario inicial':tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
+    `${esInicial?'Inventario inicial':tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':tipo==='ingreso'?'Ingreso sin factura':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
   cerrarModal('kx-modal-mov');
   toast(`✅ Movimiento registrado · ${ins.desc}: ${fmtN(stockAntes)} → ${fmtN(sd)} ${ins.uom||''}`,'success');
   if(document.getElementById('page-kardex')?.classList.contains('active')) kxRender();
@@ -17412,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.0';
+const BELEN_BUILD = '35.1';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -19870,6 +19873,115 @@ function kxMpPrev(){
     if(hp) hp.textContent = 'Cada compra se registra sobre un insumo ya creado · El stock se actualiza solo · Los insumos nuevos se crean con ➕ Nuevo insumo';
   };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ins); else ins();
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.1 — "📦 Movimiento de stock": una sola puerta, preguntando qué pasó
+// ═══════════════════════════════════════════════════════════════
+const KX_QP_OPC = [
+  { k:'compra',  ic:'🚚', t:'Llegó mercadería con factura o remito', d:'Compra a un proveedor. Suma stock y actualiza el precio.' },
+  { k:'merma',   ic:'🗑️', t:'Se tiró o se echó a perder',            d:'Vencido, roto, mal estado. Resta stock y cuenta como pérdida.' },
+  { k:'egreso',  ic:'📤', t:'Se usó fuera de una orden',              d:'Consumo que no pasó por una orden de producción.' },
+  { k:'conteo',  ic:'🔢', t:'Conté y no coincide con el sistema',     d:'El stock queda en lo que contaste; la diferencia queda registrada.' },
+  { k:'sinfac',  ic:'📥', t:'Llegó sin factura',                     d:'Donación, devolución o traslado. Suma stock sin proveedor ni precio nuevo.' },
+  { k:'inicial', ic:'📋', t:'Cargar el stock inicial',                d:'Primera vez que se cuenta este insumo en el sistema.' },
+  { k:'precio',  ic:'💲', t:'Solo cambió el precio',                  d:'No llegó mercadería: se actualiza el costo del insumo.' },
+  { k:'nuevo',   ic:'🧾', t:'Es un insumo que no existe todavía',     d:'Crear la ficha con su presentación (ej. bolsa de 25 kg).' }
+];
+let _kxQpIns = null;
+
+function kxQpModal(){
+  let m = document.getElementById('kx-modal-qp'); if(m) return m;
+  m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-qp';
+  m.innerHTML = `<div class="modal" style="max-width:720px">
+    <div class="modal-header"><span>📦</span><h2>Movimiento de stock — ¿qué pasó?</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-qp')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:12px"><label>Insumo <span style="font-weight:400;color:var(--texto-2)">(opcional: si lo elegís acá, ya queda cargado)</span></label>
+        <input id="kxqp-ins" list="kxqp-dl" autocomplete="off" placeholder="Buscá por nombre o código…" style="width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box">
+        <datalist id="kxqp-dl"></datalist><span class="hint" id="kxqp-info"></span></div>
+      <div id="kxqp-opc" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px"></div>
+    </div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  document.getElementById('kxqp-ins').addEventListener('input', kxQpInfo);
+  document.getElementById('kxqp-opc').innerHTML = KX_QP_OPC.map(o=>`
+    <button type="button" data-k="${o.k}" onclick="kxQpElegir('${o.k}')" style="text-align:left;background:#fff;border:1.5px solid var(--borde,#e5d8c3);border-radius:10px;padding:12px;cursor:pointer;font-family:inherit">
+      <div style="font-size:22px">${o.ic}</div>
+      <div style="font-weight:800;font-size:13px;margin:4px 0">${o.t}</div>
+      <div style="font-size:11px;color:var(--texto-2);line-height:1.35">${o.d}</div></button>`).join('');
+  return m;
+}
+function kxQpInfo(){
+  _kxQpIns = kxInsumoDeTexto(kxVal('kxqp-ins'));
+  const i = _kxQpIns;
+  document.getElementById('kxqp-info').textContent = i
+    ? `✅ ${i.id} · stock ${fmtN(i.stock)} ${i.uom||''}${kxPres(i)?' ('+kxPresTxt(i,i.stock)+')':''} · ${fmt$(i.precio)} sin IVA por ${i.uom||'unidad'}` : '';
+}
+function kxAbrirMovimientoStock(insId){
+  if(!kxInsPuedeEditar()){ toast('🔒 Tu rol solo puede ver el inventario','error'); return; }
+  kxQpModal();
+  document.getElementById('kxqp-dl').innerHTML = (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo')
+    .map(i=>`<option value="${kxEsc(i.desc)} (${kxEsc(i.id)})">`).join('');
+  const pre = insId ? getInsumo(insId) : null;
+  document.getElementById('kxqp-ins').value = pre ? `${pre.desc} (${pre.id})` : '';
+  kxQpInfo();
+  abrirModal('kx-modal-qp');
+}
+function kxQpElegir(k){
+  const ins = _kxQpIns;
+  if(k==='precio' && !ins){ toast('⚠️ Para cambiar el precio, elegí primero el insumo arriba','error'); document.getElementById('kxqp-ins').focus(); return; }
+  cerrarModal('kx-modal-qp');
+  if(k==='compra'){
+    if(ins) kxAbrirIngresoDe(ins.id); else abrirModal('modal-materia');
+    return;
+  }
+  if(k==='nuevo'){ kxFichaAbrir(null); return; }
+  if(k==='precio'){ kxAbrirPrecioRapido(ins.id); return; }
+  kxAbrirMovManual(ins ? ins.id : null);
+  const tipo = {merma:'merma', egreso:'egreso', conteo:'conteo', sinfac:'ingreso', inicial:'conteo'}[k];
+  document.getElementById('kx-mv-tipo').value = tipo;
+  kxMovInfo();
+  const chk = document.getElementById('kx-mv-inicial');
+  if(k==='inicial'){ chk.checked = true; if(ins) chk.dataset.ins = ins.id; }
+  else if(k==='conteo' && ins){ chk.dataset.ins = ins.id; chk.checked = !kxTieneConteo(ins.id); }
+  kxMovInfo();
+  setTimeout(()=>{ const f = document.getElementById(ins ? 'kx-mv-cant' : 'kx-mv-insumo'); if(f) f.focus(); }, 80);
+}
+
+// Botones: Stock Actual (arriba y por fila), Materia Prima y Kardex
+(function(){
+  const r0 = window.renderInventario;
+  window.renderInventario = renderInventario = function(...a){
+    const r = r0.apply(this, a);
+    try{
+      const tb = document.querySelector('#page-inventario .toolbar');
+      let b = document.getElementById('kxqp-btn-inv');
+      if(kxInsPuedeEditar()){
+        if(!b && tb){ b=document.createElement('button'); b.id='kxqp-btn-inv'; b.className='btn-primary'; b.textContent='📦 Movimiento de stock'; b.onclick=()=>kxAbrirMovimientoStock(); tb.appendChild(b); }
+        document.querySelectorAll('#tbl-inventario tr').forEach(tr=>{
+          const td = tr.querySelector('td'); if(!td || tr.querySelector('.kxqp-row')) return;
+          const ins = getInsumo((td.textContent||'').trim()); if(!ins) return;
+          const e=document.createElement('button'); e.className='btn-secondary kxqp-row'; e.title='Movimiento de stock'; e.textContent='📦';
+          e.style.cssText='padding:3px 7px;margin-left:4px'; e.onclick=ev=>{ ev.stopPropagation(); kxAbrirMovimientoStock(ins.id); };
+          tr.lastElementChild.appendChild(e);
+        });
+      } else if(b) b.remove();
+    }catch(e){ console.warn('v35.1 inventario:', e); }
+    return r;
+  };
+})();
+(function(){
+  const poner = ()=>{
+    const pg = document.getElementById('page-materia');
+    if(pg && !document.getElementById('kxqp-btn-mp')){
+      const ref = document.getElementById('kxi-btn-mp');
+      if(ref){ const b=document.createElement('button'); b.id='kxqp-btn-mp'; b.className='btn-secondary'; b.textContent='📦 Movimiento de stock'; b.onclick=()=>kxAbrirMovimientoStock(); ref.parentNode.insertBefore(b, ref); }
+    }
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,0)); else setTimeout(poner,0);
 })();
 
 </script>
