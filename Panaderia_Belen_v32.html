@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.1';
+const BELEN_BUILD = '35.2';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -19982,6 +19982,321 @@ function kxQpElegir(k){
     }
   };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,0)); else setTimeout(poner,0);
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.2 — (A) Remito / factura con varios insumos de una vez
+//         (B) Bolsas ⇄ kg también en merma, egreso y conteo
+// ═══════════════════════════════════════════════════════════════
+
+// ─── (B) CONVERSIÓN EN MOVIMIENTOS MANUALES DEL KARDEX ───────────
+function kxMvPresUI(){
+  if(document.getElementById('kxmv-pres-g')) return true;
+  const cant = document.getElementById('kx-mv-cant'); if(!cant) return false;
+  const st = 'width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box';
+  cant.closest('.form-group').insertAdjacentHTML('beforebegin', `<div class="form-group span2" id="kxmv-pres-g" style="display:none">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:var(--miga,#f6efe3);border-radius:8px;padding:8px 10px">
+        <div style="flex:1;min-width:120px"><label id="kxmv-pres-lab" style="font-size:11px;font-weight:700">Bolsas</label>
+          <input type="number" id="kxmv-pres" step="1" min="0" placeholder="0" style="${st};font-weight:700"></div>
+        <div style="padding-bottom:9px;font-weight:800">+</div>
+        <div style="flex:1;min-width:120px"><label id="kxmv-suel-lab" style="font-size:11px;font-weight:700">kg sueltos</label>
+          <input type="number" id="kxmv-suel" step="0.001" min="0" placeholder="0" style="${st}"></div>
+        <div style="flex:2;min-width:160px;font-size:11px;color:var(--texto-2);padding-bottom:6px" id="kxmv-pres-hint"></div>
+      </div></div>`);
+  const pres = document.getElementById('kxmv-pres'), suel = document.getElementById('kxmv-suel');
+  const deCantidad = ()=>{
+    const ins = kxInsumoDeTexto(kxVal('kx-mv-insumo')); const p = kxPres(ins);
+    if(!p){ return; }
+    const c = parseFloat(cant.value);
+    if(isNaN(c) || cant.value===''){ pres.value=''; suel.value=''; return; }
+    const a = Math.abs(c), n = Math.floor(kxR(a/p.f, 6));
+    pres.value = n; suel.value = kxR(a - n*p.f);
+  };
+  const aCantidad = ()=>{
+    const ins = kxInsumoDeTexto(kxVal('kx-mv-insumo')); const p = kxPres(ins); if(!p) return;
+    if(pres.value==='' && suel.value===''){ cant.value=''; }
+    else cant.value = kxR((parseFloat(pres.value)||0)*p.f + (parseFloat(suel.value)||0));
+    kxMovInfo();
+  };
+  pres.addEventListener('input', aCantidad); suel.addEventListener('input', aCantidad);
+  cant.addEventListener('input', deCantidad);
+  document.getElementById('kx-mv-insumo').addEventListener('change', deCantidad);
+  return true;
+}
+function kxMvPresRefrescar(){
+  if(!kxMvPresUI()) return;
+  const ins = kxInsumoDeTexto(kxVal('kx-mv-insumo')); const p = kxPres(ins);
+  const tipo = kxVal('kx-mv-tipo');
+  const g = document.getElementById('kxmv-pres-g');
+  const ver = !!p && tipo!=='ajuste';
+  g.style.display = ver ? '' : 'none';
+  if(!ver) return;
+  const u = ins.uom||'';
+  document.getElementById('kxmv-pres-lab').textContent = p.nom[0].toUpperCase()+kxPlural(p.nom,2).slice(1) + (tipo==='conteo' ? ' cerradas contadas' : '');
+  document.getElementById('kxmv-suel-lab').textContent = `${u} sueltos` + (tipo==='conteo' ? ' (bolsas abiertas)' : '');
+  document.getElementById('kxmv-pres-hint').textContent = `1 ${p.nom.toLowerCase()} = ${fmtN(p.f)} ${u}. Cargá ${kxPlural(p.nom,2)} y ${u} sueltos, o directamente el total en ${u} abajo.`;
+}
+(function(){
+  const orig = window.kxMovInfo;
+  window.kxMovInfo = kxMovInfo = function(){
+    const r = orig.apply(this, arguments);
+    try{ kxMvPresRefrescar(); }catch(e){ console.warn('v35.2 mov:', e); }
+    return r;
+  };
+  const oAbr = window.kxAbrirMovManual;
+  window.kxAbrirMovManual = kxAbrirMovManual = function(){
+    try{ kxMvPresUI(); ['kxmv-pres','kxmv-suel'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; }); }catch(_){}
+    const r = oAbr.apply(this, arguments);
+    try{ const c=document.getElementById('kx-mv-cant'); if(c) c.dispatchEvent(new Event('input')); }catch(_){}
+    return r;
+  };
+  const oG = window.kxGuardarMovManual;
+  window.kxGuardarMovManual = kxGuardarMovManual = function(){
+    const ins = kxInsumoDeTexto(kxVal('kx-mv-insumo')); const p = kxPres(ins);
+    const n0 = (DB.movimientosMP||[]).length;
+    const detalle = (p && kxVal('kx-mv-tipo')!=='ajuste' && (kxVal('kxmv-pres')!=='' || kxVal('kxmv-suel')!==''))
+      ? `${fmtN(parseFloat(kxVal('kxmv-pres'))||0)} ${kxPlural(p.nom, parseFloat(kxVal('kxmv-pres'))||0)} + ${fmtN(parseFloat(kxVal('kxmv-suel'))||0)} ${ins.uom||''} sueltos` : '';
+    const r = oG.apply(this, arguments);
+    try{
+      const l = DB.movimientosMP||[];
+      if(detalle && l.length > n0){
+        const m = l[l.length-1];
+        if(m && m.ins===ins.id){ m.nota = (m.nota ? m.nota+' · ' : '') + detalle; m._ts = Date.now(); guardarEnStorage(); }
+      }
+    }catch(e){ console.warn(e); }
+    return r;
+  };
+})();
+
+// ─── (A) REMITO / FACTURA CON VARIOS INSUMOS ────────────────────
+let _kxRm = { filas: [], n: 0 };
+
+function kxRmModal(){
+  let m = document.getElementById('kx-modal-rm'); if(m) return m;
+  const st = 'width:100%;padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box';
+  m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-rm';
+  m.innerHTML = `<div class="modal" style="max-width:1180px;width:96vw">
+    <div class="modal-header"><span>🧾</span><h2>Cargar remito o factura — varios insumos</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-rm')">✕</button></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px">
+        <div class="form-group"><label>Fecha de ingreso *</label><input type="date" id="kxrm-fecha" style="${st}"></div>
+        <div class="form-group"><label>Proveedor *</label><select id="kxrm-prov" style="${st}"></select></div>
+        <div class="form-group"><label>N° remito / factura</label><input id="kxrm-nro" placeholder="Ej: R 0003-00012345" style="${st}"></div>
+        <div class="form-group"><label>IVA de todos los renglones</label><select id="kxrm-iva" style="${st}">
+          ${['0','2.5','5','10.5','21','27'].map(v=>`<option value="${v}" ${v==='21'?'selected':''}>${v}%</option>`).join('')}</select></div>
+      </div>
+      <datalist id="kxrm-dl"></datalist>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px" id="kxrm-tab">
+        <thead><tr style="text-align:left;color:var(--texto-2)">
+          <th style="padding:6px;min-width:200px">Insumo *</th><th style="padding:6px;min-width:90px">Presentación</th>
+          <th style="padding:6px;min-width:90px">Cantidad *</th><th style="padding:6px;min-width:100px">$ por presentación</th>
+          <th style="padding:6px;min-width:100px">$ sin IVA por unidad *</th><th style="padding:6px;min-width:70px">IVA %</th>
+          <th style="padding:6px;min-width:75px">Lote</th><th style="padding:6px;min-width:120px">Vencimiento</th>
+          <th style="padding:6px;min-width:95px;text-align:right">Subtotal s/IVA</th><th></th></tr></thead>
+        <tbody id="kxrm-body"></tbody></table></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px">
+        <div><button class="btn-secondary" onclick="kxRmFila()">➕ Agregar renglón</button>
+          <button class="btn-secondary" onclick="kxRmNuevoInsumo()">🧾 Insumo nuevo</button></div>
+        <div id="kxrm-tot" style="font-size:14px;text-align:right"></div>
+      </div>
+      <div id="kxrm-avisos" style="margin-top:10px;font-size:12px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="cerrarModal('kx-modal-rm')">Cancelar</button>
+      <button class="btn-primary" id="kxrm-ok" onclick="kxRmGuardar()">✅ Guardar remito</button></div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  document.getElementById('kxrm-iva').addEventListener('change', ()=>{
+    const v = kxVal('kxrm-iva'); document.querySelectorAll('.kxrm-ivap').forEach(s=>s.value=v); kxRmCalc();
+  });
+  document.getElementById('kxrm-prov').addEventListener('change', kxRmCalc);
+  return m;
+}
+function kxRmFila(insId){
+  const n = ++_kxRm.n;
+  const st = 'width:100%;padding:6px 8px;border:1.5px solid var(--borde);border-radius:6px;font-size:12px;box-sizing:border-box';
+  const iva = kxVal('kxrm-iva') || '21';
+  const tr = document.createElement('tr'); tr.dataset.n = n; tr.style.borderTop = '1px solid var(--borde,#eee)';
+  tr.innerHTML = `
+    <td style="padding:5px"><input class="kxrm-ins" list="kxrm-dl" autocomplete="off" placeholder="Buscá el insumo…" style="${st}"><div class="kxrm-info" style="font-size:10px;color:var(--texto-2);margin-top:2px"></div></td>
+    <td style="padding:5px"><input class="kxrm-pres" type="number" step="0.001" min="0" style="${st}" disabled><div class="kxrm-plab" style="font-size:10px;color:var(--texto-2)"></div></td>
+    <td style="padding:5px"><input class="kxrm-cant" type="number" step="0.001" min="0" style="${st};font-weight:700"><div class="kxrm-ulab" style="font-size:10px;color:var(--texto-2)"></div></td>
+    <td style="padding:5px"><input class="kxrm-pp" type="number" step="0.01" min="0" style="${st}" disabled></td>
+    <td style="padding:5px"><input class="kxrm-pu" type="number" step="0.01" min="0" style="${st}"></td>
+    <td style="padding:5px"><select class="kxrm-ivap" style="${st}">${['0','2.5','5','10.5','21','27'].map(v=>`<option value="${v}" ${v===iva?'selected':''}>${v}</option>`).join('')}</select></td>
+    <td style="padding:5px"><input class="kxrm-lote" style="${st}"></td>
+    <td style="padding:5px"><input class="kxrm-vto" type="date" style="${st}"></td>
+    <td style="padding:5px;text-align:right;font-weight:700" class="kxrm-sub">—</td>
+    <td style="padding:5px"><button class="btn-secondary" title="Quitar renglón" style="padding:3px 8px" onclick="this.closest('tr').remove();kxRmCalc()">✕</button></td>`;
+  document.getElementById('kxrm-body').appendChild(tr);
+  const q = c => tr.querySelector('.'+c);
+  const ins = q('kxrm-ins'), pres = q('kxrm-pres'), cant = q('kxrm-cant'), pp = q('kxrm-pp'), pu = q('kxrm-pu');
+  const insDe = ()=>kxInsumoDeTexto(ins.value);
+  ins.addEventListener('input', ()=>kxRmElegido(tr));
+  ins.addEventListener('change', ()=>kxRmElegido(tr));
+  pres.addEventListener('input', ()=>{ const p=kxPres(insDe()); if(p) cant.value = pres.value==='' ? '' : kxR((parseFloat(pres.value)||0)*p.f); kxRmCalc(); });
+  cant.addEventListener('input', ()=>{ const p=kxPres(insDe()); if(p) pres.value = cant.value==='' ? '' : kxR((parseFloat(cant.value)||0)/p.f); kxRmCalc(); });
+  pp.addEventListener('input', ()=>{ const p=kxPres(insDe()); if(p) pu.value = pp.value==='' ? '' : kxR((parseFloat(pp.value)||0)/p.f, 4); kxRmCalc(); });
+  pu.addEventListener('input', ()=>{ const p=kxPres(insDe()); if(p) pp.value = pu.value==='' ? '' : kxR((parseFloat(pu.value)||0)*p.f, 2); kxRmCalc(); });
+  tr.querySelector('.kxrm-ivap').addEventListener('change', kxRmCalc);
+  if(insId){ const i = getInsumo(insId); if(i){ ins.value = `${i.desc} (${i.id})`; kxRmElegido(tr); } }
+  return tr;
+}
+function kxRmElegido(tr){
+  const i = kxInsumoDeTexto(tr.querySelector('.kxrm-ins').value);
+  const was = tr.dataset.ins || '';
+  tr.dataset.ins = i ? i.id : '';
+  const p = kxPres(i);
+  const pres = tr.querySelector('.kxrm-pres'), pp = tr.querySelector('.kxrm-pp');
+  pres.disabled = !p; pp.disabled = !p;
+  tr.querySelector('.kxrm-plab').textContent = p ? `${kxPlural(p.nom,2)} de ${fmtN(p.f)} ${i.uom||''}` : (i ? 'suelto' : '');
+  tr.querySelector('.kxrm-ulab').textContent = i ? (KX_UOM_TXT[i.uom]||i.uom||'') : '';
+  if(i && was !== i.id){
+    const pu = tr.querySelector('.kxrm-pu');
+    if(!pu.value && Number(i.precio)>0) pu.value = kxR(i.precio, 4);
+    const cant = tr.querySelector('.kxrm-cant');
+    pres.value = p && cant.value ? kxR((parseFloat(cant.value)||0)/p.f) : '';
+    pp.value = p && pu.value ? kxR((parseFloat(pu.value)||0)*p.f, 2) : '';
+  }
+  if(!p){ pres.value=''; pp.value=''; }
+  tr.querySelector('.kxrm-info').textContent = i ? `${i.id} · stock ${fmtN(i.stock)} ${i.uom||''}${p?' ('+kxPresTxt(i,i.stock)+')':''}` : (tr.querySelector('.kxrm-ins').value.trim() ? '⚠️ Elegí un insumo de la lista' : '');
+  kxRmCalc();
+}
+function kxRmLeer(){
+  return [...document.querySelectorAll('#kxrm-body tr')].map(tr=>{
+    const g = c => tr.querySelector('.'+c).value;
+    const ins = getInsumo(tr.dataset.ins||'');
+    return { tr, ins, txt: g('kxrm-ins').trim(), cant: parseFloat(g('kxrm-cant'))||0, pres: parseFloat(g('kxrm-pres'))||0,
+      pu: parseFloat(g('kxrm-pu'))||0, iva: parseFloat(g('kxrm-ivap'))||0, lote: g('kxrm-lote').trim(), vto: g('kxrm-vto') };
+  }).filter(f=>f.txt || f.cant || f.pu);
+}
+function kxRmCalc(){
+  const filas = kxRmLeer(); let tot = 0, totIva = 0; const av = []; const vistos = {};
+  document.querySelectorAll('#kxrm-body tr').forEach(tr=>{ tr.querySelector('.kxrm-sub').textContent='—'; tr.style.background=''; });
+  filas.forEach((f,k)=>{
+    const sub = f.cant*f.pu; tot += sub; totIva += sub*(1+f.iva/100);
+    if(f.cant && f.pu) f.tr.querySelector('.kxrm-sub').textContent = fmt$(sub);
+    if(f.ins){
+      if(vistos[f.ins.id]) av.push(`ℹ️ ${kxEsc(f.ins.desc)} está en más de un renglón (se cargan como ingresos separados; puede ser otro lote).`);
+      vistos[f.ins.id] = 1;
+      const ant = Number(f.ins.precio)||0;
+      if(ant>0 && f.pu>0){ const v=(f.pu-ant)/ant*100; if(Math.abs(v)>30){ av.push(`<span style="color:var(--alerta,#c0392b);font-weight:700">⚠️ ${kxEsc(f.ins.desc)}: el precio cambia ${v>=0?'+':''}${v.toFixed(0)}% (${fmt$(ant)} → ${fmt$(f.pu)} por ${kxEsc(f.ins.uom||'')}). Revisá si es por ${kxEsc(f.ins.uom||'unidad')}${kxPres(f.ins)?' o por '+kxEsc(kxPres(f.ins).nom.toLowerCase()):''}.</span>`); f.tr.style.background='#fdecea'; } }
+    }
+  });
+  document.getElementById('kxrm-tot').innerHTML = filas.length
+    ? `${filas.length} renglón(es) · Total sin IVA <strong>${fmt$(tot)}</strong> · con IVA <strong>${fmt$(totIva)}</strong>` : '';
+  document.getElementById('kxrm-avisos').innerHTML = [...new Set(av)].map(a=>`<div>${a}</div>`).join('');
+}
+function kxAbrirRemito(insIds){
+  if(!kxInsPuedeEditar()){ toast('🔒 Tu rol solo puede ver el inventario','error'); return; }
+  kxRmModal(); _kxRm.n = 0;
+  document.getElementById('kxrm-fecha').value = kxHoy();
+  document.getElementById('kxrm-nro').value = '';
+  document.getElementById('kxrm-iva').value = '21';
+  const pv = document.getElementById('kxrm-prov');
+  pv.innerHTML = '<option value="">Seleccionar…</option>' + (DB.proveedores||[]).filter(p=>p.estado==='Activo').map(p=>`<option>${kxEsc(p.razon)}</option>`).join('');
+  kxRmDatalist();
+  document.getElementById('kxrm-body').innerHTML = '';
+  const ids = Array.isArray(insIds) ? insIds : insIds ? [insIds] : [];
+  ids.forEach(id=>kxRmFila(id));
+  for(let k=ids.length; k<3; k++) kxRmFila();
+  kxRmCalc();
+  abrirModal('kx-modal-rm');
+}
+function kxRmDatalist(){
+  document.getElementById('kxrm-dl').innerHTML = (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo')
+    .map(i=>`<option value="${kxEsc(i.desc)} (${kxEsc(i.id)})">`).join('');
+}
+function kxRmNuevoInsumo(){
+  const vacio = [...document.querySelectorAll('#kxrm-body tr')].find(tr=>!tr.dataset.ins);
+  const txt = vacio ? vacio.querySelector('.kxrm-ins').value.trim() : '';
+  kxFichaAbrir(null, { desc: txt, onOk: ins=>{
+    if(!ins) return;
+    kxRmDatalist();
+    const tr = vacio || kxRmFila();
+    tr.querySelector('.kxrm-ins').value = `${ins.desc} (${ins.id})`; kxRmElegido(tr);
+  }});
+  const f = document.getElementById('kx-modal-ins'); if(f) f.style.zIndex = '260';
+}
+function kxRmGuardar(){
+  const fecha = kxVal('kxrm-fecha'), prov = kxVal('kxrm-prov'), nro = kxVal('kxrm-nro').trim();
+  const filas = kxRmLeer();
+  if(!fecha || !prov){ toast('⚠️ Completá fecha y proveedor','error'); return; }
+  if(fecha > kxHoy()){ toast('⚠️ La fecha no puede ser futura','error'); return; }
+  if(kxFechaBloqueada(fecha)){ kxAvisoBloqueo(fecha); return; }
+  if(!filas.length){ toast('⚠️ Cargá al menos un renglón','error'); return; }
+  const mal = filas.filter(f=>!f.ins || !(f.cant>0) || !(f.pu>0));
+  if(mal.length){
+    mal.forEach(f=>f.tr.style.background='#fdecea');
+    toast(`⚠️ Revisá ${mal.length} renglón(es): falta elegir el insumo de la lista, la cantidad o el precio`,'error'); return;
+  }
+  const tot = filas.reduce((s,f)=>s+f.cant*f.pu,0);
+  if(!confirm(`Se van a cargar ${filas.length} ingreso(s) del proveedor ${prov}${nro?' (remito '+nro+')':''} por ${fmt$(tot)} sin IVA.\n\n${filas.map(f=>`• ${f.ins.desc}: ${fmtN(f.cant)} ${f.ins.uom||''}${kxPres(f.ins)?' ('+kxPresTxt(f.ins,f.cant)+')':''} a ${fmt$(f.pu)}`).join('\n')}\n\n¿Confirmar?`)) return;
+
+  const tOrig = window.toast; const errores = []; let ok = 0;
+  window.toast = toast = function(m, t){ if(t==='error') errores.push(m); };
+  try{
+    filas.forEach(f=>{
+      const n0 = DB.materiaPrima.length;
+      abrirModal('modal-materia');
+      kxMpSeleccionar(f.ins.id);
+      const set = (id,v)=>{ const e=document.getElementById(id); if(e) e.value = v; };
+      set('mp-fecha', fecha); set('mp-proveedor', prov);
+      set('mp-lote', f.lote); set('mp-vto', f.vto); set('mp-sinvto', 'no');
+      set('mp-cantidad', kxR(f.cant)); set('mp-siniva', kxR(f.pu, 4)); set('mp-ivapct', String(f.iva));
+      set('mp-coniva', kxR(f.pu*(1+f.iva/100), 2));
+      set('kxmp-pres', kxPres(f.ins) ? kxR(f.cant/kxPres(f.ins).f) : '');
+      set('mp-obs', nro ? `Remito/Factura ${nro}` : '');
+      guardarMateriaPrima();
+      if(DB.materiaPrima.length > n0){
+        ok++;
+        const reg = DB.materiaPrima[DB.materiaPrima.length-1];
+        if(nro){ reg.remitoNro = nro; reg._ts = Date.now(); }
+      } else errores.push(`${f.ins.desc}: no se pudo cargar`);
+      cerrarModal('modal-materia');
+    });
+  } finally { window.toast = toast = tOrig; }
+  guardarEnStorage();
+  try{ registrarAuditoria('Creación', `Remito ${nro||'s/n'} — ${prov}`, `${ok} ingreso(s) · ${fmt$(tot)} sin IVA · ${filas.map(f=>f.ins.id).join(', ')}`); }catch(_){}
+  if(errores.length){ toast(`⚠️ Se cargaron ${ok} de ${filas.length}. ${errores[0]}`,'error'); return; }
+  cerrarModal('kx-modal-rm');
+  toast(`✅ Remito cargado: ${ok} insumo(s) · ${fmt$(tot)} sin IVA`,'success');
+  try{ renderMateriaPrima(); }catch(_){}
+  try{ if(document.getElementById('page-inventario')?.classList.contains('active')) renderInventario(); }catch(_){}
+}
+
+// Entradas al remito: Materia Prima, asistente y Nuevo Ingreso
+(function(){
+  const poner = ()=>{
+    const ref = document.getElementById('kxqp-btn-mp');
+    if(ref && !document.getElementById('kxrm-btn-mp')){
+      const b=document.createElement('button'); b.id='kxrm-btn-mp'; b.className='btn-secondary'; b.textContent='🧾 Cargar remito (varios insumos)';
+      b.onclick=()=>kxAbrirRemito(); ref.parentNode.insertBefore(b, ref);
+    }
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,20)); else setTimeout(poner,20);
+})();
+KX_QP_OPC.splice(1, 0, { k:'remito', ic:'🧾', t:'Llegó un remito con varios insumos', d:'Cargá todos los renglones de la factura de una vez.' });
+(function(){
+  const o = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){
+    if(k==='remito'){ const ins=_kxQpIns; cerrarModal('kx-modal-qp'); kxAbrirRemito(ins ? [ins.id] : []); return; }
+    return o.apply(this, arguments);
+  };
+  const oi = window.initFormMateria;
+  window.initFormMateria = initFormMateria = function(){
+    const r = oi.apply(this, arguments);
+    try{
+      if(!document.getElementById('kxrm-link')){
+        const chip = document.getElementById('kxmp-chip');
+        if(chip) chip.insertAdjacentHTML('beforebegin', `<div id="kxrm-link" style="font-size:12px;margin-top:4px">¿Son varios insumos? <a href="#" onclick="event.preventDefault();cerrarModal('modal-materia');kxAbrirRemito()">🧾 Cargá el remito completo</a></div>`);
+      }
+    }catch(_){}
+    return r;
+  };
 })();
 
 </script>
