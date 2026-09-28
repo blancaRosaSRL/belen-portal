@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.2';
+const BELEN_BUILD = '35.3';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -20296,6 +20296,118 @@ KX_QP_OPC.splice(1, 0, { k:'remito', ic:'🧾', t:'Llegó un remito con varios i
       }
     }catch(_){}
     return r;
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.3 — (1) El precio con IVA se recalcula bien
+//         (2) Dashboard solo informativo (sin carga de datos)
+//         (3) Una sola puerta de carga: Materia Prima → 📦 Cargar datos
+// ═══════════════════════════════════════════════════════════════
+
+// (1) Antes: el $ con IVA se completaba con la PRIMERA tecla y después no se
+//     actualizaba más (escribías 740 y quedaba el IVA de 7). Ahora se recalcula
+//     siempre, salvo que la persona lo haya escrito a mano.
+function kxIvaAuto(sinId, pctId, conId){
+  const con = document.getElementById(conId); if(!con) return;
+  if(con.dataset.manual === '1') return;
+  const s = parseFloat(kxVal(sinId))||0, p = parseFloat(kxVal(pctId))||0;
+  con.value = s > 0 ? (s*(1+p/100)).toFixed(2) : '';
+}
+function kxIvaMarcarManual(conId){
+  const con = document.getElementById(conId); if(!con || con._kxIva) return;
+  con._kxIva = true;
+  con.addEventListener('input', e=>{ if(e.isTrusted) con.dataset.manual = con.value==='' ? '' : '1'; });
+}
+window.calcularIVA = calcularIVA = function(){ kxIvaMarcarManual('mp-coniva'); kxIvaAuto('mp-siniva','mp-ivapct','mp-coniva'); };
+window.calcularIVAEdicion = calcularIVAEdicion = function(){ kxIvaMarcarManual('emp-coniva'); kxIvaAuto('emp-siniva','emp-ivapct','emp-coniva'); };
+(function(){
+  const oi = window.initFormMateria;
+  window.initFormMateria = initFormMateria = function(){
+    const r = oi.apply(this, arguments);
+    try{ kxIvaMarcarManual('mp-coniva'); const c=document.getElementById('mp-coniva'); c.dataset.manual=''; c.value=''; }catch(_){}
+    return r;
+  };
+  const oe = window.abrirEditarMateriaPrima;
+  if(typeof oe === 'function'){
+    window.abrirEditarMateriaPrima = abrirEditarMateriaPrima = function(){
+      const r = oe.apply(this, arguments);
+      try{
+        kxIvaMarcarManual('emp-coniva');
+        const c = document.getElementById('emp-coniva');
+        const s = parseFloat(kxVal('emp-siniva'))||0, p = parseFloat(kxVal('emp-ivapct'))||0, v = parseFloat(c.value)||0;
+        // Si lo guardado no coincide con el cálculo, se respeta como valor de factura
+        c.dataset.manual = (v>0 && Math.abs(v - s*(1+p/100)) > 0.02) ? '1' : '';
+      }catch(_){}
+      return r;
+    };
+  }
+})();
+
+// (2) Dashboard: solo información
+window.kxRenderReponer = kxRenderReponer = function(){
+  const div = document.getElementById('dash-reponer'); if(!div) return;
+  const reponer = kxInsumosReponer();
+  if(!reponer.length){ div.innerHTML='<div class="empty-state"><div class="es-icon">✅</div><h4>Todo en orden</h4><p>Sin alertas de stock</p></div>'; return; }
+  div.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody>` +
+    reponer.map(i=>`<tr><td><strong>${kxEsc(i.desc)}</strong></td>
+      <td style="color:var(--alerta);font-weight:700">${fmtN(i.stock)} ${kxEsc(i.uom||'')}${kxPres(i)?`<div style="font-size:10px;font-weight:400;color:var(--texto-2)">${kxPresTxt(i,i.stock)}</div>`:''}</td>
+      <td>${fmtN(i.min)} ${kxEsc(i.uom||'')}</td></tr>`).join('') +
+    `</tbody></table></div><div style="font-size:11px;color:var(--texto-2);padding:6px 14px 10px">Solo información. Las compras y correcciones se cargan en <a href="#" onclick="event.preventDefault();irAPagina('materia')">Materia Prima → 📦 Cargar datos</a>.</div>`;
+};
+(function(){
+  const o = window.kxRenderAlertaPrecios;
+  window.kxRenderAlertaPrecios = kxRenderAlertaPrecios = function(){
+    const r = o.apply(this, arguments);
+    try{
+      const el = document.getElementById('dash-precios-vencidos'); if(!el) return r;
+      el.querySelectorAll('button.kx-precio-btn').forEach(b=>{
+        const s = document.createElement('span');
+        s.className = 'kx-precio-btn'; s.style.cssText = b.style.cssText + ';cursor:default';
+        s.textContent = b.textContent.replace('✏️','').trim(); s.title = 'Se actualiza al cargar una compra';
+        b.replaceWith(s);
+      });
+      el.querySelectorAll('div').forEach(d=>{ if(d.textContent.trim()==='Tocá un insumo para actualizar su precio directamente') d.textContent = 'Solo información: el precio se actualiza al cargar una compra en Materia Prima → 📦 Cargar datos.'; });
+    }catch(e){ console.warn(e); }
+    return r;
+  };
+})();
+
+// (3) Una sola puerta de carga
+(function(){
+  const css = document.createElement('style');
+  css.textContent = `
+    #page-materia button[onclick="abrirModal('modal-materia')"],
+    #kxi-btn-mp, #kxrm-btn-mp, #kxi-btn-nuevo, #kxqp-btn-inv, .kxqp-row, .kxi-edit,
+    #materia-tab-ingresos .toolbar button[onclick="kxAbrirMovManual()"],
+    #page-kardex button[onclick="kxAbrirMovManual()"] { display:none !important; }`;
+  document.head.appendChild(css);
+  const ajustar = ()=>{
+    const b = document.getElementById('kxqp-btn-mp');
+    if(b){ b.textContent = '📦 Cargar datos'; b.className = 'btn-primary'; b.title = 'Compras, remitos, mermas, conteos, precios e insumos nuevos'; }
+    const pk = document.getElementById('page-kardex');
+    if(pk && !document.getElementById('kx353-nota')){
+      const tb = pk.querySelector('.toolbar');
+      if(tb) tb.insertAdjacentHTML('beforeend', `<span id="kx353-nota" style="font-size:12px;color:var(--texto-2)">Los movimientos se cargan en <a href="#" onclick="event.preventDefault();irAPagina('materia')">Materia Prima → 📦 Cargar datos</a></span>`);
+    }
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(ajustar,80)); else setTimeout(ajustar,80);
+  const os = window.showPage;
+  window.showPage = showPage = function(){ const r = os.apply(this, arguments); try{ ajustar(); }catch(_){} return r; };
+})();
+// El asistente también permite corregir la ficha (reemplaza el ✏️ de Stock Actual)
+KX_QP_OPC.push({ k:'ficha', ic:'✏️', t:'Corregir la ficha de un insumo', d:'Nombre, categoría, presentación (bolsa de 25 kg), mínimo y máximo.' });
+(function(){
+  const o = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){
+    if(k==='ficha'){
+      const ins = _kxQpIns;
+      if(!ins){ toast('⚠️ Elegí primero el insumo arriba','error'); document.getElementById('kxqp-ins').focus(); return; }
+      cerrarModal('kx-modal-qp'); kxFichaAbrir(ins.id); return;
+    }
+    return o.apply(this, arguments);
   };
 })();
 
