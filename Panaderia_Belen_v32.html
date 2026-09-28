@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.3';
+const BELEN_BUILD = '35.4';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -20408,6 +20408,59 @@ KX_QP_OPC.push({ k:'ficha', ic:'✏️', t:'Corregir la ficha de un insumo', d:'
       cerrarModal('kx-modal-qp'); kxFichaAbrir(ins.id); return;
     }
     return o.apply(this, arguments);
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.4 — El lápiz ✏️ de un ingreso ya no modifica el stock
+//   Cantidad, unidad y nombre quedan bloqueados: el stock solo cambia desde
+//   Materia Prima → 📦 Cargar datos. El lápiz corrige datos del comprobante
+//   (fecha, proveedor, lote, vencimiento, precio, observaciones).
+// ═══════════════════════════════════════════════════════════════
+function kxEmpBloquear(){
+  const lock = (id, txt)=>{
+    const e = document.getElementById(id); if(!e) return;
+    if(e.tagName==='SELECT') e.disabled = true; else e.readOnly = true;
+    e.style.background = 'var(--miga-dk)'; e.style.color = 'var(--texto-2)'; e.title = txt;
+  };
+  lock('emp-cantidad', 'La cantidad no se modifica desde acá');
+  lock('emp-uom', 'La unidad se define en la ficha del insumo');
+  lock('emp-desc', 'El nombre se corrige en la ficha del insumo');
+  const g = document.getElementById('emp-cantidad')?.closest('.form-group');
+  if(g && !document.getElementById('kx354-nota')){
+    g.insertAdjacentHTML('beforeend', `<span class="hint" id="kx354-nota" style="color:var(--texto-2)">🔒 No se edita acá. Para corregir el stock usá
+      <a href="#" onclick="event.preventDefault();cerrarModal('modal-editar-materia');irAPagina('materia');setTimeout(()=>kxAbrirMovimientoStock(kxVal('emp-id')),80)">📦 Cargar datos</a>
+      (conteo o merma).</span>`);
+  }
+  // A decomiso: queda como marca del lote, sin descontar stock
+  const d = document.getElementById('emp-descontar-stock');
+  if(d){ d.checked = false; d.disabled = true; const w = d.closest('label'); if(w) w.style.display = 'none'; }
+  const wrap = document.getElementById('emp-descuento-wrap');
+  if(wrap && !document.getElementById('kx354-dec')){
+    wrap.insertAdjacentHTML('beforeend', `<div id="kx354-dec" style="font-size:12px;color:var(--texto-2);margin-top:6px">Marca el lote como descartado. Para descontar los kilos del stock, cargá la merma en <strong>📦 Cargar datos → Se tiró o se echó a perder</strong>.</div>`);
+  }
+}
+(function(){
+  const oa = window.abrirEditarMateriaPrima;
+  window.abrirEditarMateriaPrima = abrirEditarMateriaPrima = function(){
+    const r = oa.apply(this, arguments);
+    try{ kxEmpBloquear(); }catch(e){ console.warn('v35.4:', e); }
+    return r;
+  };
+  const og = window.guardarEdicionMateriaPrima;
+  window.guardarEdicionMateriaPrima = guardarEdicionMateriaPrima = function(){
+    try{
+      const r = DB.materiaPrima[materiaPrimaEditandoIdx];
+      if(r){
+        // Aunque alguien cambie el formulario, se guardan los valores originales
+        const set = (id,v)=>{ const e=document.getElementById(id); if(e) e.value = v==null?'':v; };
+        set('emp-cantidad', r.cantidad); set('emp-uom', r.uom||''); set('emp-desc', r.desc||'');
+        const d = document.getElementById('emp-descontar-stock'); if(d) d.checked = false;
+      }
+    }catch(e){ console.warn('v35.4:', e); }
+    return og.apply(this, arguments);
   };
 })();
 
