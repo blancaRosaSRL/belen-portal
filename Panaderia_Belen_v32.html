@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.5';
+const BELEN_BUILD = '35.6';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -20525,6 +20525,323 @@ function kxAnularIr(mpId){
   window.kxAbrirMovimientoStock = kxAbrirMovimientoStock = function(){
     const r = oa.apply(this, arguments);
     try{ const b = document.querySelector('#kxqp-opc [data-k="anular"]'); if(b) b.style.display = kxPuedeUnificar() ? '' : 'none'; }catch(_){}
+    return r;
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.6 — PARTE DE PRODUCCIÓN: varias órdenes en un solo cuadro
+//   Cada renglón se guarda como una orden normal (OP-…) unida por el
+//   número de parte (PP-…). Control de stock sobre el TOTAL del parte.
+// ═══════════════════════════════════════════════════════════════
+let _kxPp = { n:0 };
+
+function kxPpNextNro(){
+  const n = (DB.ordenes||[]).map(o=>parseInt(String(o.parte||'').replace('PP-',''),10)||0);
+  return 'PP-' + String(Math.max(0, ...n) + 1).padStart(4,'0');
+}
+function kxPpRecetaDeTexto(t){
+  t = String(t||'').trim(); if(!t) return null;
+  const m = t.match(/\(([^()]+)\)\s*$/);
+  if(m){ const r = getReceta(m[1].trim()); if(r) return r; }
+  return (DB.recetas||[]).find(r=>!r.baja && String(r.nombre||'').trim().toLowerCase()===t.toLowerCase()) || null;
+}
+function kxPpModal(){
+  let m = document.getElementById('kx-modal-parte'); if(m) return m;
+  const st = 'width:100%;padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box';
+  m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-parte';
+  m.innerHTML = `<div class="modal" style="max-width:1150px;width:96vw">
+    <div class="modal-header"><span>📋</span><h2>Parte de producción — varias órdenes juntas</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-parte')">✕</button></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:10px">
+        <div class="form-group"><label>N° de parte</label><input id="kxpp-nro" readonly style="${st};background:var(--miga-dk)"></div>
+        <div class="form-group"><label>Fecha *</label><input type="date" id="kxpp-fecha" style="${st}"></div>
+        <div class="form-group"><label>Hora</label><input type="time" id="kxpp-hora" style="${st}"></div>
+        <div class="form-group"><label>Turno</label><select id="kxpp-turno" style="${st}"><option>Mañana</option><option>Tarde</option><option>Noche</option></select></div>
+        <div class="form-group"><label>Estado de todas las órdenes</label><select id="kxpp-estado" style="${st}">
+          <option value="Planificada">📅 Planificada</option><option value="En proceso">⚙️ En proceso</option><option value="Ejecutada">✅ Ejecutada — descuenta stock</option></select></div>
+      </div>
+      <div class="form-group" style="margin-bottom:10px"><label>👩‍🍳 Equipo del turno</label>
+        <div id="kxpp-oper" style="display:flex;flex-direction:column;gap:6px"></div>
+        <button type="button" class="btn-secondary" style="margin-top:6px;padding:6px 12px;font-size:12px;align-self:flex-start" onclick="kxPpOper()">➕ Agregar persona</button></div>
+      <datalist id="kxpp-dl"></datalist>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="text-align:left;color:var(--texto-2)"><th style="padding:6px;min-width:240px">Receta *</th><th style="padding:6px;min-width:140px">Pedir por</th>
+          <th style="padding:6px;min-width:90px">Cantidad *</th><th style="padding:6px">Lotes</th><th style="padding:6px;text-align:right">Costo</th><th style="padding:6px">Stock</th><th></th></tr></thead>
+        <tbody id="kxpp-body"></tbody></table></div>
+      <button class="btn-secondary" style="margin-top:8px" onclick="kxPpFila()">➕ Agregar producto</button>
+      <div style="margin-top:14px;border-top:2px solid var(--borde,#e5d8c3);padding-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <strong style="font-size:14px">🧮 Insumos que necesita el parte completo</strong><span id="kxpp-tot" style="font-size:13px"></span></div>
+        <div id="kxpp-ins" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="cerrarModal('kx-modal-parte')">Cancelar</button>
+      <button class="btn-primary" onclick="kxPpGuardar()">✅ Guardar parte</button></div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  document.getElementById('kxpp-estado').addEventListener('change', kxPpCalc);
+  return m;
+}
+function kxPpOper(nombre, tarea){
+  const st = 'padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px';
+  const d = document.createElement('div'); d.style.cssText = 'display:flex;gap:8px';
+  d.innerHTML = `<input class="kxpp-on" placeholder="Nombre" value="${kxEsc(nombre||'')}" style="${st};flex:1">
+    <input class="kxpp-ot" placeholder="Tarea (amasado, horneado, armado…)" value="${kxEsc(tarea||'')}" style="${st};flex:1.4">
+    <button type="button" class="btn-danger" onclick="this.parentNode.remove()">✕</button>`;
+  document.getElementById('kxpp-oper').appendChild(d);
+}
+function kxPpFila(){
+  const st = 'width:100%;padding:6px 8px;border:1.5px solid var(--borde);border-radius:6px;font-size:12px;box-sizing:border-box';
+  const tr = document.createElement('tr'); tr.style.borderTop = '1px solid var(--borde,#eee)';
+  tr.innerHTML = `
+    <td style="padding:5px"><input class="kxpp-rec" list="kxpp-dl" autocomplete="off" placeholder="Buscá la receta…" style="${st}"><div class="kxpp-rinfo" style="font-size:10px;color:var(--texto-2)"></div></td>
+    <td style="padding:5px"><select class="kxpp-modo" style="${st}"><option value="lotes">🍲 Lotes completos</option><option value="piezas">🍰 Piezas / porciones</option></select></td>
+    <td style="padding:5px"><input class="kxpp-cant" type="number" min="0" step="0.1" style="${st};font-weight:700"></td>
+    <td style="padding:5px" class="kxpp-lotes">—</td>
+    <td style="padding:5px;text-align:right;font-weight:700" class="kxpp-costo">—</td>
+    <td style="padding:5px;font-size:11px" class="kxpp-st">—</td>
+    <td style="padding:5px"><button class="btn-secondary" style="padding:3px 8px" onclick="this.closest('tr').remove();kxPpCalc()">✕</button></td>`;
+  document.getElementById('kxpp-body').appendChild(tr);
+  ['input','change'].forEach(ev=>{
+    tr.querySelector('.kxpp-rec').addEventListener(ev, kxPpCalc);
+    tr.querySelector('.kxpp-modo').addEventListener(ev, kxPpCalc);
+    tr.querySelector('.kxpp-cant').addEventListener(ev, kxPpCalc);
+  });
+  return tr;
+}
+function kxPpLeer(){
+  return [...document.querySelectorAll('#kxpp-body tr')].map(tr=>{
+    const txt = tr.querySelector('.kxpp-rec').value.trim();
+    const rec = kxPpRecetaDeTexto(txt);
+    const modo = tr.querySelector('.kxpp-modo').value;
+    const cant = parseFloat(tr.querySelector('.kxpp-cant').value)||0;
+    let conv = null; if(rec && cant>0) conv = calcularLotesOrden(rec, modo, cant);
+    return { tr, txt, rec, modo, cant, conv };
+  }).filter(f=>f.txt || f.cant);
+}
+// Suma de insumos de varias recetas (sub-recetas incluidas)
+function kxPpMapa(items){
+  const mapa = {};
+  items.forEach(it=>{ if(it.rec && it.lotes>0) insumosNecesariosReceta(it.rec, it.lotes, mapa); });
+  return mapa;
+}
+function kxPpFaltantes(mapa){
+  return Object.entries(mapa).map(([id, nec])=>{ const i = getInsumo(id);
+    return { id, ins:i, nec, hay: i ? Number(i.stock)||0 : 0 }; }).filter(x=>x.ins && x.hay + 1e-9 < x.nec);
+}
+function kxPpInsTabla(mapa, conEstado){
+  const filas = Object.entries(mapa).map(([id, nec])=>({ id, ins:getInsumo(id), nec }))
+    .sort((a,b)=>String(a.ins?.desc||a.id).localeCompare(String(b.ins?.desc||b.id)));
+  if(!filas.length) return '<div style="font-size:12px;color:var(--texto-2)">Cargá recetas y cantidades para ver el total.</div>';
+  return `<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Insumo</th><th style="text-align:right">Necesita</th><th>En presentación</th>${conEstado?'<th style="text-align:right">Hay en stock</th><th>Estado</th>':''}</tr></thead><tbody>` +
+    filas.map(f=>{
+      const u = f.ins?.uom||''; const hay = Number(f.ins?.stock)||0; const falta = f.nec - hay;
+      return `<tr><td>${kxEsc(f.ins?.desc||f.id)}</td><td style="text-align:right"><strong>${fmtN(kxR(f.nec))} ${kxEsc(u)}</strong></td>
+        <td style="color:var(--texto-2)">${f.ins && kxPres(f.ins) ? kxPresTxt(f.ins, f.nec) : '—'}</td>
+        ${conEstado?`<td style="text-align:right">${fmtN(hay)} ${kxEsc(u)}</td><td>${falta>1e-9?`<span style="color:var(--alerta,#c0392b);font-weight:700">🔴 Faltan ${fmtN(kxR(falta))} ${kxEsc(u)}</span>`:'🟢 Alcanza'}</td>`:''}</tr>`;
+    }).join('') + '</tbody></table></div>';
+}
+function kxPpCalc(){
+  const filas = kxPpLeer(); let costo = 0; const items = [];
+  document.querySelectorAll('#kxpp-body tr').forEach(tr=>{ tr.style.background=''; });
+  filas.forEach(f=>{
+    const li = f.tr.querySelector('.kxpp-lotes'), co = f.tr.querySelector('.kxpp-costo'), st = f.tr.querySelector('.kxpp-st'), ri = f.tr.querySelector('.kxpp-rinfo');
+    ri.textContent = f.rec ? f.rec.id : (f.txt ? '⚠️ Elegí una receta de la lista' : '');
+    if(!f.rec || !f.conv){ li.textContent='—'; co.textContent='—'; st.textContent='—'; return; }
+    if(f.conv.error){ li.textContent='—'; co.textContent='—'; st.innerHTML=`<span style="color:var(--alerta,#c0392b)">⚠️ ${kxEsc(f.conv.error)}</span>`; return; }
+    const lotes = f.conv.lotes; const c = calcCostoReceta(f.rec, lotes); costo += c;
+    items.push({ rec:f.rec, lotes });
+    li.textContent = fmtN(kxR(lotes,2)); co.textContent = fmt$(c);
+    const ch = verificarStockOrden(f.rec, lotes);
+    st.innerHTML = ch.ok ? '🟢' : `<span style="color:var(--alerta,#c0392b)" title="${kxEsc(ch.faltantes.map(x=>x.desc).join(', '))}">🔴 sola no alcanza</span>`;
+  });
+  const mapa = kxPpMapa(items); const falt = kxPpFaltantes(mapa);
+  document.getElementById('kxpp-ins').innerHTML = kxPpInsTabla(mapa, true) +
+    (falt.length ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fdecea;font-size:12px;color:var(--alerta,#c0392b);font-weight:700">
+      ⚠️ Con todo el parte junto faltan ${falt.length} insumo(s).${kxVal('kxpp-estado')==='Ejecutada'?' No se puede guardar como Ejecutada.':' Se puede guardar como Planificada o En proceso.'}</div>` : '');
+  document.getElementById('kxpp-tot').innerHTML = filas.length ? `${filas.length} producto(s) · Costo total <strong>${fmt$(costo)}</strong>` : '';
+}
+function kxAbrirParte(){
+  kxPpModal();
+  document.getElementById('kxpp-nro').value = kxPpNextNro() + ' (se confirma al guardar)';
+  document.getElementById('kxpp-fecha').value = kxHoy();
+  const d = new Date(); document.getElementById('kxpp-hora').value = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  document.getElementById('kxpp-turno').value = d.getHours()<13 ? 'Mañana' : d.getHours()<20 ? 'Tarde' : 'Noche';
+  document.getElementById('kxpp-estado').value = 'Planificada';
+  document.getElementById('kxpp-oper').innerHTML = ''; kxPpOper();
+  document.getElementById('kxpp-dl').innerHTML = (DB.recetas||[]).filter(r=>!r.baja)
+    .map(r=>`<option value="${kxEsc(r.nombre)} (${kxEsc(r.id)})">`).join('');
+  document.getElementById('kxpp-body').innerHTML = ''; for(let k=0;k<4;k++) kxPpFila();
+  kxPpCalc();
+  abrirModal('kx-modal-parte');
+}
+function kxPpGuardar(){
+  const fecha = kxVal('kxpp-fecha'), hora = kxVal('kxpp-hora'), turno = kxVal('kxpp-turno'), estado = kxVal('kxpp-estado');
+  const oper = [...document.querySelectorAll('#kxpp-oper > div')].map(d=>({ nombre:d.querySelector('.kxpp-on').value.trim(), tarea:d.querySelector('.kxpp-ot').value.trim() })).filter(o=>o.nombre);
+  const filas = kxPpLeer();
+  if(!fecha){ toast('⚠️ Completá la fecha','error'); return; }
+  if(!filas.length){ toast('⚠️ Cargá al menos un producto','error'); return; }
+  const mal = filas.filter(f=>!f.rec || !(f.cant>0) || !f.conv || f.conv.error);
+  if(mal.length){ mal.forEach(f=>f.tr.style.background='#fdecea'); toast(`⚠️ Revisá ${mal.length} renglón(es): receta de la lista y cantidad`,'error'); return; }
+  if(estado==='Ejecutada'){
+    if(kxFechaBloqueada(fecha)){ kxAvisoBloqueo(fecha); return; }
+    const falt = kxPpFaltantes(kxPpMapa(filas.map(f=>({ rec:f.rec, lotes:f.conv.lotes }))));
+    if(falt.length){
+      alert(`🚫 No se puede guardar el parte como "Ejecutada": con todas las recetas juntas el stock no alcanza.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtN(kxR(x.nec))} ${x.ins.uom||''}, hay ${fmtN(x.hay)} (faltan ${fmtN(kxR(x.nec-x.hay))})`).join('\n')}\n\nGuardalo como "Planificada" o "En proceso", o reducí cantidades.`);
+      return;
+    }
+  }
+  if(!confirm(`Se van a crear ${filas.length} orden(es) de producción en un mismo parte, estado "${estado}".\n\n${filas.map(f=>`• ${f.rec.nombre}: ${fmtN(f.cant)} ${f.modo==='piezas'?'piezas':'lote(s)'}`).join('\n')}\n\n¿Confirmar?`)) return;
+
+  const pp = kxPpNextNro(); const creadas = []; const errores = [];
+  const tO = window.toast, aO = window.alert;
+  window.toast = toast = function(m,t){ if(t==='error') errores.push(m); };
+  window.alert = function(m){ errores.push(String(m).split('\n')[0]); };
+  try{
+    filas.forEach(f=>{
+      const n0 = DB.ordenes.length;
+      abrirModal('modal-produccion');
+      const set = (id,v)=>{ const e=document.getElementById(id); if(e) e.value = v; };
+      set('op-fecha', fecha); set('op-hora', hora); set('op-turno', turno);
+      set('op-receta', f.rec.id); set('op-receta-input', f.rec.nombre);
+      set('op-modo', f.modo); set('op-unidades', f.cant); set('op-estado', estado);
+      document.getElementById('op-operarios-list').innerHTML = '';
+      (oper.length ? oper : [{nombre:'',tarea:''}]).forEach(o=>agregarFilaOperario(o.nombre, o.tarea));
+      guardarOrdenProduccion();
+      if(DB.ordenes.length > n0){ const o = DB.ordenes[DB.ordenes.length-1]; o.parte = pp; o._ts = Date.now(); creadas.push(o.nro); }
+      else errores.push(`${f.rec.nombre}: no se pudo crear`);
+      cerrarModal('modal-produccion');
+    });
+  } finally { window.toast = toast = tO; window.alert = aO; }
+  guardarEnStorage();
+  try{ registrarAuditoria('Creación', `Parte de producción ${pp}`, `${creadas.length} orden(es): ${creadas.join(', ')} · ${fecha} · Turno ${turno} · Estado ${estado}`); }catch(_){}
+  try{ renderProduccion(); renderDashboard(); }catch(_){}
+  if(errores.length){ toast(`⚠️ Se crearon ${creadas.length} de ${filas.length}. ${errores[0]}`,'error'); return; }
+  cerrarModal('kx-modal-parte');
+  toast(`✅ Parte ${pp}: ${creadas.length} orden(es) creadas`,'success');
+  if(confirm(`Parte ${pp} guardado.\n\n¿Querés imprimirlo ahora?`)) kxPpImprimir(pp);
+}
+
+// ─── Lista de partes: imprimir y marcar ejecutado ───────────────
+function kxPpOrdenes(pp){ return (DB.ordenes||[]).filter(o=>o.parte===pp); }
+function kxAbrirPartes(){
+  const grupos = {};
+  (DB.ordenes||[]).forEach(o=>{ if(o.parte) (grupos[o.parte] = grupos[o.parte] || []).push(o); });
+  const lista = Object.entries(grupos).sort((a,b)=>b[0].localeCompare(a[0]));
+  let m = document.getElementById('kx-modal-partes');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-partes';
+    m.innerHTML = `<div class="modal" style="max-width:860px"><div class="modal-header"><span>🗂️</span><h2>Partes de producción</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-partes')">✕</button></div><div class="modal-body" id="kxpps-body"></div></div>`;
+    document.body.appendChild(m); m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  }
+  document.getElementById('kxpps-body').innerHTML = !lista.length
+    ? '<div class="empty-state"><div class="es-icon">📋</div><h4>Todavía no hay partes</h4><p>Creá uno con "📋 Parte de producción"</p></div>'
+    : `<div class="table-wrap"><table><thead><tr><th>Parte</th><th>Fecha</th><th>Productos</th><th>Estado</th><th></th></tr></thead><tbody>` +
+      lista.map(([pp, os])=>{
+        const ej = os.filter(o=>o.estado==='Ejecutada').length;
+        const est = ej===os.length ? '✅ Ejecutado' : ej ? `⚙️ ${ej} de ${os.length} ejecutadas` : `📅 ${os[0].estado}`;
+        return `<tr><td><span class="mono">${pp}</span></td><td>${(os[0].fecha||'').split('-').reverse().join('/')} · ${kxEsc(os[0].turno||'')}</td>
+          <td style="font-size:12px">${os.map(o=>`${kxEsc(o.producto)} (${fmtN(o.unidades)})`).join(', ')}</td><td>${est}</td>
+          <td style="white-space:nowrap"><button class="btn-secondary" style="padding:4px 9px" onclick="kxPpImprimir('${pp}')">🖨️ Imprimir</button>
+            ${ej<os.length?`<button class="btn-primary" style="padding:4px 9px" onclick="kxPpEjecutar('${pp}')">✅ Marcar ejecutado</button>`:''}</td></tr>`;
+      }).join('') + '</tbody></table></div>';
+  abrirModal('kx-modal-partes');
+}
+function kxPpEjecutar(pp){
+  const pend = kxPpOrdenes(pp).filter(o=>o.estado!=='Ejecutada');
+  if(!pend.length) return;
+  const f0 = pend.find(o=>kxFechaBloqueada(o.fecha)); if(f0){ kxAvisoBloqueo(f0.fecha); return; }
+  const items = pend.map(o=>({ rec:getReceta(o.recetaId), lotes:o.lotes||o.unidades }));
+  const falt = kxPpFaltantes(kxPpMapa(items));
+  if(falt.length){
+    alert(`🚫 No se puede ejecutar el parte ${pp}: el stock no alcanza para todas las órdenes.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtN(kxR(x.nec))} ${x.ins.uom||''}, hay ${fmtN(x.hay)}`).join('\n')}`);
+    return;
+  }
+  if(!confirm(`¿Marcar como ejecutadas las ${pend.length} orden(es) pendientes del parte ${pp}?\n\nSe descuenta del stock lo que usan todas las recetas.`)) return;
+  pend.forEach(o=>{
+    const rec = getReceta(o.recetaId); if(!rec) return;
+    const antes = kxSnapshotStock();
+    const mapa = insumosNecesariosReceta(rec, o.lotes||o.unidades);
+    Object.entries(mapa).forEach(([id, nec])=>{ const i = getInsumo(id); if(i){ i.stock = Math.max(0, +(i.stock - nec).toFixed(4)); i._ts = Date.now(); } });
+    const ant = o.estado; o.estado = 'Ejecutada'; o._ts = Date.now();
+    try{ kxRegistrarDiferencias(antes, { fecha:o.fecha, org:'produccion', ref:o.nro }); }catch(e){ console.warn('Kardex:', e); }
+    registrarAuditoria('Modificación', `Orden ${o.nro} — ${o.producto}`, `Parte ${pp}: ${ant} → Ejecutada · Stock descontado (sub-recetas incluidas)`);
+  });
+  guardarEnStorage();
+  toast(`✅ Parte ${pp} ejecutado · stock descontado`,'success');
+  try{ renderProduccion(); renderDashboard(); }catch(_){}
+  kxAbrirPartes();
+}
+function kxPpHtml(pp){
+  const os = kxPpOrdenes(pp); if(!os.length) return '';
+  const o0 = os[0];
+  const mapa = kxPpMapa(os.map(o=>({ rec:getReceta(o.recetaId), lotes:o.lotes||o.unidades })));
+  const oper = []; os.forEach(o=>(o.operarios||[]).forEach(p=>{ if(p.nombre && !oper.some(x=>x.nombre===p.nombre && x.tarea===p.tarea)) oper.push(p); }));
+  const costo = os.reduce((s,o)=>{ const r=getReceta(o.recetaId); return s + (r ? calcCostoReceta(r, o.lotes||o.unidades) : 0); },0);
+  const e = kxEsc;
+  const ins = Object.entries(mapa).map(([id,n])=>({ i:getInsumo(id), id, n })).sort((a,b)=>String(a.i?.desc||a.id).localeCompare(String(b.i?.desc||b.id)));
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Parte ${pp}</title><style>
+    @page{size:A4;margin:12mm} body{font-family:Arial,sans-serif;color:#2A1C13;font-size:13px;margin:0}
+    h1{font-size:20px;margin:0} .sub{color:#6B5A4B;font-size:12px;margin-top:3px}
+    .top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #2A1C13;padding-bottom:6px;margin-bottom:10px}
+    table{width:100%;border-collapse:collapse;margin-top:6px} th{text-align:left;font-size:10px;color:#6B5A4B;border-bottom:1.5px solid #2A1C13;padding:5px}
+    td{border-bottom:1px solid #D9C9B0;padding:8px 5px;vertical-align:top} .r{text-align:right} .blank{height:34px}
+    h2{font-size:13px;margin:14px 0 2px;color:#A34E17;text-transform:uppercase;letter-spacing:1px}
+    .caja{border:1px solid #D9C9B0;border-radius:6px;padding:6px 8px;min-height:70px;margin-top:6px}
+    .firmas{display:flex;gap:30px;margin-top:26px}.firmas div{flex:1;border-top:1px solid #2A1C13;text-align:center;padding-top:4px;font-size:11px}
+    .aviso{background:#F6EFE3;padding:8px;margin-bottom:8px;font-size:12px} @media print{.aviso{display:none}}</style></head>
+    <body onload="setTimeout(()=>window.print(),300)"><div class="aviso">🖨️ Si no se abre la ventana de impresión, usá <strong>Ctrl+P</strong>.</div>
+    <div class="top"><div><h1>🥐 Parte de producción ${e(pp)}</h1>
+      <div class="sub">Panadería Belén · ${(o0.fecha||'').split('-').reverse().join('/')}${o0.hora?' · '+e(o0.hora):''} · Turno ${e(o0.turno||'')} · ${os.length} producto(s)</div></div>
+      <div class="sub">Impreso ${new Date().toLocaleDateString('es-AR')}</div></div>
+    ${oper.length?`<div><strong>Equipo del turno:</strong> ${oper.map(p=>e(p.nombre)+(p.tarea?' ('+e(p.tarea)+')':'')).join(' · ')}</div>`:'<div><strong>Equipo del turno:</strong> ______________________________________________</div>'}
+    <h2>Lo que vamos a elaborar</h2>
+    <table><thead><tr><th>Orden</th><th>Producto</th><th class="r">Pedido</th><th class="r">Lotes</th><th>¿Cuánto salió?</th><th>Observaciones</th></tr></thead><tbody>
+    ${os.map(o=>`<tr><td>${e(o.nro)}</td><td><strong>${e(o.producto)}</strong></td><td class="r">${fmtN(o.unidades)} ${o.modo==='piezas'?'piezas':'lote(s)'}</td>
+      <td class="r">${fmtN(kxR(o.lotes||o.unidades,2))}</td><td class="blank"></td><td class="blank"></td></tr>`).join('')}</tbody></table>
+    <h2>Insumos a retirar para todo el parte</h2>
+    <table><thead><tr><th>Insumo</th><th class="r">Cantidad</th><th>En presentación</th><th style="width:70px">Retirado ✓</th></tr></thead><tbody>
+    ${ins.map(x=>`<tr><td>${e(x.i?.desc||x.id)}</td><td class="r"><strong>${fmtN(kxR(x.n))} ${e(x.i?.uom||'')}</strong></td><td>${x.i&&kxPres(x.i)?kxPresTxt(x.i,x.n):'—'}</td><td></td></tr>`).join('')}</tbody></table>
+    <div style="margin-top:6px;font-size:11px;color:#6B5A4B">Costo estimado de insumos del parte: ${fmt$(costo)}</div>
+    <h2>Notas del turno</h2><div class="caja"></div>
+    <div class="firmas"><div>Responsable del turno</div><div>Encargado de planta</div></div>
+    </body></html>`;
+}
+function kxPpImprimir(pp){
+  const h = kxPpHtml(pp); if(!h){ toast('⚠️ No se encontró el parte','error'); return; }
+  const v = window.open('', '_blank');
+  if(!v){ toast('⚠️ El navegador bloqueó la ventana de impresión','error'); return; }
+  v.document.open(); v.document.write(h); v.document.close();
+}
+
+// Botones en Producción y número de parte en la lista de órdenes
+(function(){
+  const poner = ()=>{
+    const nb = document.querySelector("#page-produccion button[onclick=\"abrirModal('modal-produccion')\"]");
+    if(nb && !document.getElementById('kxpp-btn')){
+      const b = document.createElement('button'); b.id='kxpp-btn'; b.className='btn-primary'; b.textContent='📋 Parte de producción (varias órdenes)';
+      b.onclick = kxAbrirParte; nb.parentNode.insertBefore(b, nb.nextSibling);
+      const l = document.createElement('button'); l.id='kxpps-btn'; l.className='btn-secondary'; l.textContent='🗂️ Partes (imprimir / ejecutar)';
+      l.onclick = kxAbrirPartes; b.parentNode.insertBefore(l, b.nextSibling);
+    }
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,30)); else setTimeout(poner,30);
+  const o = window.renderProduccion;
+  window.renderProduccion = renderProduccion = function(){
+    const r = o.apply(this, arguments);
+    try{
+      document.querySelectorAll('#tbl-produccion tr').forEach(tr=>{
+        const s = tr.querySelector('td .mono'); if(!s || tr.querySelector('.kxpp-tag')) return;
+        const ord = (DB.ordenes||[]).find(x=>x.nro===s.textContent.trim());
+        if(ord && ord.parte) s.insertAdjacentHTML('afterend', `<br><span class="kxpp-tag" style="font-size:10px;background:var(--miga,#f6efe3);border-radius:4px;padding:1px 5px;cursor:pointer" title="Imprimir el parte" onclick="kxPpImprimir('${ord.parte}')">📋 ${ord.parte}</span>`);
+      });
+    }catch(e){ console.warn('v35.6:', e); }
     return r;
   };
 })();
