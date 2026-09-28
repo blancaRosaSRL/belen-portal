@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.4';
+const BELEN_BUILD = '35.5';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -20461,6 +20461,71 @@ function kxEmpBloquear(){
       }
     }catch(e){ console.warn('v35.4:', e); }
     return og.apply(this, arguments);
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.5 — "Eliminar ingreso" sale del lápiz y pasa a 📦 Cargar datos
+// ═══════════════════════════════════════════════════════════════
+(function(){
+  const css = document.createElement('style'); css.textContent = '#kxmp-btn{display:none !important}';
+  document.head.appendChild(css);
+})();
+KX_QP_OPC.push({ k:'anular', ic:'🗑️', t:'Anular un ingreso cargado por error', d:'Compra duplicada o que no llegó. Resta el stock que había sumado. Solo Dueño, Administrador o Programador.' });
+function kxAnularElegir(insId){
+  const ins = getInsumo(insId); if(!ins) return;
+  const lista = (DB.materiaPrima||[]).filter(r=>r.id===ins.id)
+    .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')) || (b._ts||0)-(a._ts||0));
+  let m = document.getElementById('kx-modal-anular');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-anular';
+    m.innerHTML = `<div class="modal" style="max-width:760px"><div class="modal-header"><span>🗑️</span><h2 id="kxan-tit">Anular un ingreso</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-anular')">✕</button></div>
+      <div class="modal-body" id="kxan-body"></div></div>`;
+    document.body.appendChild(m);
+    m.addEventListener('click', e=>{ if(e.target===m) m.classList.remove('open'); });
+  }
+  document.getElementById('kxan-tit').textContent = `Anular un ingreso — ${ins.desc}`;
+  document.getElementById('kxan-body').innerHTML = !lista.length
+    ? `<div class="empty-state"><h4>Este insumo no tiene ingresos cargados</h4></div>`
+    : `<p style="font-size:13px;margin:0 0 10px">Elegí el ingreso que se cargó por error. En el paso siguiente vas a ver cómo queda el stock antes de confirmar.</p>
+      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Cantidad</th><th>Proveedor</th><th>Lote</th><th>$ sin IVA</th><th></th></tr></thead><tbody>` +
+      lista.map(r=>{
+        if(!r.mpId) r.mpId = kxClaveMP(r);
+        const bloq = kxFechaBloqueada(r.fecha);
+        const pres = r.presCant && r.presNombre ? ` <span style="color:var(--texto-2);font-size:11px">(${fmtN(r.presCant)} ${kxEsc(kxPlural(r.presNombre, r.presCant))})</span>` : '';
+        return `<tr${r.decomiso?' style="opacity:.6"':''}><td>${r.fecha?r.fecha.split('-').reverse().join('/'):'—'}</td>
+          <td><strong>${fmtN(r.cantidad)} ${kxEsc(r.uom||ins.uom||'')}</strong>${pres}</td><td>${kxEsc(r.proveedor||'—')}</td>
+          <td>${kxEsc(r.lote||'—')}</td><td>${fmt$(r.sinIVA||0)}</td>
+          <td>${bloq ? '<span style="font-size:11px;color:var(--texto-2)">🔒 mes cerrado</span>'
+                     : `<button class="btn-secondary" style="padding:4px 10px" onclick="kxAnularIr('${kxEsc(r.mpId)}')">Elegir</button>`}</td></tr>`;
+      }).join('') + `</tbody></table></div>`;
+  abrirModal('kx-modal-anular');
+}
+function kxAnularIr(mpId){
+  if(!kxPuedeUnificar()){ toast('⚠️ Solo Dueño, Administrador o Programador pueden anular ingresos','error'); return; }
+  cerrarModal('kx-modal-anular');
+  _kxMp = { k: mpId, modo:'' };
+  kxDupModal(); kxMpPaso1(); document.getElementById('modal-kx-dup').classList.add('open');
+}
+(function(){
+  const o = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){
+    if(k==='anular'){
+      if(!kxPuedeUnificar()){ toast('⚠️ Solo Dueño, Administrador o Programador pueden anular ingresos','error'); return; }
+      const ins = _kxQpIns;
+      if(!ins){ toast('⚠️ Elegí primero el insumo arriba','error'); document.getElementById('kxqp-ins').focus(); return; }
+      cerrarModal('kx-modal-qp'); kxAnularElegir(ins.id); return;
+    }
+    return o.apply(this, arguments);
+  };
+  const oa = window.kxAbrirMovimientoStock;
+  window.kxAbrirMovimientoStock = kxAbrirMovimientoStock = function(){
+    const r = oa.apply(this, arguments);
+    try{ const b = document.querySelector('#kxqp-opc [data-k="anular"]'); if(b) b.style.display = kxPuedeUnificar() ? '' : 'none'; }catch(_){}
+    return r;
   };
 })();
 
