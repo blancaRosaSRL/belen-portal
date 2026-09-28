@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.7';
+const BELEN_BUILD = '35.8';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21085,6 +21085,103 @@ function kxPpSust(id, qty){
   window.kxPpGuardar = kxPpGuardar = function(){
     _kxSustForce = Object.assign({}, _kxPpSust);
     try{ return og.apply(this, arguments); } finally { _kxSustForce = null; }
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.8 — Órdenes de producción: filtrar por día y, ese día, por hora
+// ═══════════════════════════════════════════════════════════════
+const _kxFo = { dia:'', hora:'', turno:'', estado:'' };
+function kxFoUI(){
+  if(document.getElementById('kxfo-bar')) return;
+  const card = document.getElementById('tbl-produccion')?.closest('.card'); if(!card) return;
+  const st = 'padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px';
+  card.insertAdjacentHTML('beforebegin', `<div id="kxfo-bar" class="card" style="margin-bottom:12px;padding:10px 14px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div><label style="display:block;font-size:11px;font-weight:700">📅 Día</label><input type="date" id="kxfo-dia" style="${st}"></div>
+      <div><label style="display:block;font-size:11px;font-weight:700">🕐 Hora de la orden</label><select id="kxfo-hora" style="${st};min-width:170px" disabled><option value="">Elegí primero un día</option></select></div>
+      <div><label style="display:block;font-size:11px;font-weight:700">Turno</label><select id="kxfo-turno" style="${st}"><option value="">Todos</option><option>Mañana</option><option>Tarde</option><option>Noche</option></select></div>
+      <div><label style="display:block;font-size:11px;font-weight:700">Estado</label><select id="kxfo-estado" style="${st}"><option value="">Todos</option><option>Planificada</option><option>En proceso</option><option>Ejecutada</option></select></div>
+      <button class="btn-secondary" onclick="kxFoDia(kxHoy())">Hoy</button>
+      <button class="btn-secondary" onclick="kxFoDia(kxFoCorrer(-1))">◀ Día anterior</button>
+      <button class="btn-secondary" onclick="kxFoDia(kxFoCorrer(1))">Día siguiente ▶</button>
+      <button class="btn-secondary" onclick="kxFoLimpiar()">✕ Ver todas</button>
+    </div>
+    <div id="kxfo-res" style="font-size:12px;color:var(--texto-2);margin-top:6px"></div></div>`);
+  document.getElementById('kxfo-dia').addEventListener('change', e=>kxFoDia(e.target.value));
+  document.getElementById('kxfo-hora').addEventListener('change', e=>{ _kxFo.hora = e.target.value; renderProduccion(); });
+  document.getElementById('kxfo-turno').addEventListener('change', e=>{ _kxFo.turno = e.target.value; renderProduccion(); });
+  document.getElementById('kxfo-estado').addEventListener('change', e=>{ _kxFo.estado = e.target.value; renderProduccion(); });
+}
+function kxFoCorrer(n){
+  const base = _kxFo.dia || kxHoy(); const d = new Date(base+'T12:00:00'); d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function kxFoDia(d){ _kxFo.dia = d||''; _kxFo.hora = ''; renderProduccion(); }
+function kxFoLimpiar(){ Object.assign(_kxFo, { dia:'', hora:'', turno:'', estado:'' }); renderProduccion(); }
+function kxFoHora(o){ const h = String(o.hora||'').slice(0,2); return /^\d\d$/.test(h) ? h : '--'; }
+function kxFoCoincide(o){
+  if(_kxFo.dia && o.fecha!==_kxFo.dia) return false;
+  if(_kxFo.dia && _kxFo.hora && kxFoHora(o)!==_kxFo.hora) return false;
+  if(_kxFo.turno && (o.turno||'')!==_kxFo.turno) return false;
+  if(_kxFo.estado && o.estado!==_kxFo.estado) return false;
+  return true;
+}
+(function(){
+  const o = window.renderProduccion;
+  window.renderProduccion = renderProduccion = function(){
+    const r = o.apply(this, arguments);
+    try{
+      kxFoUI();
+      const tb = document.getElementById('tbl-produccion'); if(!tb || !document.getElementById('kxfo-bar')) return r;
+      // Controles reflejan el estado
+      document.getElementById('kxfo-dia').value = _kxFo.dia;
+      document.getElementById('kxfo-turno').value = _kxFo.turno;
+      document.getElementById('kxfo-estado').value = _kxFo.estado;
+      const selH = document.getElementById('kxfo-hora');
+      if(_kxFo.dia){
+        const delDia = (DB.ordenes||[]).filter(x=>x.fecha===_kxFo.dia);
+        const cnt = {}; delDia.forEach(x=>{ const h=kxFoHora(x); cnt[h]=(cnt[h]||0)+1; });
+        selH.disabled = false;
+        selH.innerHTML = `<option value="">Todas las horas (${delDia.length})</option>` +
+          Object.keys(cnt).sort((a,b)=>(a==='--')-(b==='--') || a.localeCompare(b)).map(h=>`<option value="${h}">${h==='--'?'Sin hora':h+':00 a '+h+':59'} (${cnt[h]})</option>`).join('');
+        if(_kxFo.hora && !cnt[_kxFo.hora]) _kxFo.hora = '';
+        selH.value = _kxFo.hora;
+      } else { selH.disabled = true; selH.innerHTML = '<option value="">Elegí primero un día</option>'; }
+
+      const filtros = _kxFo.dia || _kxFo.turno || _kxFo.estado;
+      const filas = [...tb.querySelectorAll('tr')].map(tr=>{
+        const s = tr.querySelector('td .mono'); const ord = s ? (DB.ordenes||[]).find(x=>x.nro===s.textContent.trim()) : null;
+        return { tr, ord };
+      }).filter(x=>x.ord);
+      if(!filtros){ document.getElementById('kxfo-res').textContent = `${filas.length} orden(es) en total`; return r; }
+      const ok = filas.filter(x=>kxFoCoincide(x.ord));
+      filas.forEach(x=>{ x.tr.style.display = 'none'; });
+      tb.querySelectorAll('.kxfo-h, .kxfo-vacio').forEach(x=>x.remove());
+      if(!ok.length){
+        tb.insertAdjacentHTML('beforeend', `<tr class="kxfo-vacio"><td colspan="8"><div class="empty-state"><div class="es-icon">🔎</div><h4>No hay órdenes con ese filtro</h4></div></td></tr>`);
+      } else if(_kxFo.dia){
+        // Ese día: en orden de hora, con un separador por cada hora
+        ok.sort((a,b)=>String(a.ord.hora||'99').localeCompare(String(b.ord.hora||'99')) || String(a.ord.nro).localeCompare(String(b.ord.nro)));
+        let hAnt = null;
+        ok.forEach(x=>{
+          const h = kxFoHora(x.ord);
+          if(h!==hAnt){
+            const n = ok.filter(y=>kxFoHora(y.ord)===h).length;
+            tb.insertAdjacentHTML('beforeend', `<tr class="kxfo-h"><td colspan="8" style="background:var(--miga,#f6efe3);font-weight:800;font-size:12px;padding:6px 12px">🕐 ${h==='--'?'Sin hora cargada':h+':00 a '+h+':59'} · ${n} orden(es)</td></tr>`);
+            hAnt = h;
+          }
+          tb.appendChild(x.tr); x.tr.style.display = '';
+        });
+      } else ok.forEach(x=>{ x.tr.style.display = ''; });
+      const costo = ok.reduce((s,x)=>{ const rc = getReceta(x.ord.recetaId); const l = x.ord.lotes||x.ord.unidades;
+        return s + (rc ? calcCostoReceta(rc, l) + (typeof kxSustDif==='function' ? kxSustDif(rc, l, x.ord.reemplazos) : 0) : 0); }, 0);
+      const fch = _kxFo.dia ? _kxFo.dia.split('-').reverse().join('/') : '';
+      document.getElementById('kxfo-res').innerHTML = `Mostrando <strong>${ok.length}</strong> de ${filas.length} orden(es)${fch?' del '+fch:''}${_kxFo.hora?' · '+_kxFo.hora+' h':''}${_kxFo.turno?' · turno '+_kxFo.turno:''}${_kxFo.estado?' · '+_kxFo.estado:''} · costo estimado ${fmt$(costo)}`;
+    }catch(e){ console.warn('v35.8 filtro:', e); }
+    return r;
   };
 })();
 
