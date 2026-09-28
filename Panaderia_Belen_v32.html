@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.8';
+const BELEN_BUILD = '35.9';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21183,6 +21183,32 @@ function kxFoCoincide(o){
     }catch(e){ console.warn('v35.8 filtro:', e); }
     return r;
   };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v35.9 — Las ventanas emergentes NO se cierran al tocar afuera
+//   Solo se cierran con ✕, Cancelar o al guardar. Así no se pierden
+//   datos cargados por un clic de más.
+// ═══════════════════════════════════════════════════════════════
+(function(){
+  const css = document.createElement('style');
+  css.textContent = `@keyframes kxSacudir{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+    .kx-sacudir{animation:kxSacudir .35s ease}`;
+  document.head.appendChild(css);
+  let ultimoAviso = 0;
+  const bloquear = e=>{
+    const t = e.target;
+    if(!(t instanceof Element) || !t.classList.contains('modal-overlay') || !t.classList.contains('open')) return;
+    e.stopPropagation(); e.stopImmediatePropagation(); e.preventDefault();
+    if(e.type!=='click') return;
+    const m = t.querySelector('.modal');
+    if(m){ m.classList.remove('kx-sacudir'); void m.offsetWidth; m.classList.add('kx-sacudir'); }
+    if(Date.now() - ultimoAviso > 4000){ ultimoAviso = Date.now(); try{ toast('ℹ️ Para cerrar esta ventana usá ✕ o Cancelar','success'); }catch(_){} }
+  };
+  // En fase de captura: corta el clic antes de que llegue a cualquier "cerrar al tocar afuera"
+  window.addEventListener('click', bloquear, true);
 })();
 
 </script>
