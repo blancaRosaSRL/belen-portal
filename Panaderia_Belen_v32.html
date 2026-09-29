@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '35.9';
+const BELEN_BUILD = '36.0';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21209,6 +21209,214 @@ function kxFoCoincide(o){
   };
   // En fase de captura: corta el clic antes de que llegue a cualquier "cerrar al tocar afuera"
   window.addEventListener('click', bloquear, true);
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v36.0 — NOMBRES REALES EN TODAS LAS PC
+//   Cada usuario ve y firma con su nombre ("Marcela Pérez") en vez de
+//   "Administrador 1". Los nombres viajan por la nube a las 6 PC.
+//   Las contraseñas siguen siendo de cada PC (no se suben a la nube).
+// ═══════════════════════════════════════════════════════════════
+DB.perfilesUsuarios = DB.perfilesUsuarios || [];
+if(!LS_KEYS_ARRAYS.includes('perfilesUsuarios')) LS_KEYS_ARRAYS.push('perfilesUsuarios');
+if(!CLOUD_SYNC_ARRAYS.includes('perfilesUsuarios')) CLOUD_SYNC_ARRAYS.push('perfilesUsuarios');
+
+function kxPerfil(uid){ return (DB.perfilesUsuarios||[]).find(p=>p && p.id===uid) || null; }
+function kxPerfilGuardar(uid, datos){
+  if(!Array.isArray(DB.perfilesUsuarios)) DB.perfilesUsuarios = [];
+  let p = kxPerfil(uid);
+  if(!p){ p = { id:uid }; DB.perfilesUsuarios.push(p); }
+  let cambio = false;
+  Object.entries(datos).forEach(([k,v])=>{ if(p[k]!==v){ p[k]=v; cambio=true; } });
+  if(cambio){ p._ts = Date.now(); p.por = usuarioActual ? usuarioActual.nombre : '—'; try{ guardarEnStorage(); }catch(_){} }
+  return p;
+}
+function kxNombreBase(uid){ const u = USUARIOS_BASE.find(b=>b.id===uid) || _kxExtrasLocales().find(b=>b.id===uid); return u ? (u.nombreBase||u.nombre) : uid; }
+
+// Nombre real: primero el de la nube (igual en todas las PC), después el local
+(function(){
+  const aliasLocal = window.getAlias;
+  window.getAlias = getAlias = function(uid){
+    const p = kxPerfil(uid);
+    return (p && p.nombre) || aliasLocal(uid) || '';
+  };
+  const setLocal = window.setAlias;
+  window.setAlias = setAlias = function(uid, alias){
+    setLocal(uid, alias);
+    const n = String(alias||'').trim();
+    if(n) kxPerfilGuardar(uid, { nombre:n });
+  };
+})();
+
+// Los nombres ya cargados en cada PC se suben a la nube (una sola vez)
+function kxMigrarAliasLocales(){
+  try{
+    const bd = JSON.parse(localStorage.getItem('belen_users_pass')||'{}');
+    Object.entries(bd).forEach(([uid, v])=>{
+      const a = v && String(v.alias||'').trim();
+      if(a && !(kxPerfil(uid)||{}).nombre) kxPerfilGuardar(uid, { nombre:a });
+    });
+  }catch(e){ console.warn('v36 migrar:', e); }
+}
+
+// Usuarios agregados por un Dueño: también viajan a todas las PC
+let _kxLeerExtraOrig = null;
+function _kxExtrasLocales(){ return _kxLeerExtraOrig ? _kxLeerExtraOrig() : []; }
+(function(){
+  _kxLeerExtraOrig = window._leerUsuariosExtra;
+  window._leerUsuariosExtra = _leerUsuariosExtra = function(){
+    const loc = _kxLeerExtraOrig();
+    const ids = new Set(loc.map(u=>u.id));
+    (DB.perfilesUsuarios||[]).forEach(p=>{
+      if(p && p.extra && !p.borrado && !ids.has(p.id)) loc.push({ id:p.id, nombre:p.nombreBase||p.nombre, icono:p.icono||'👤', rol:p.rol, activo:p.activo!==false });
+    });
+    return loc.filter(u=>!((kxPerfil(u.id)||{}).borrado));
+  };
+  const og = window.guardarUsuariosExtra;
+  window.guardarUsuariosExtra = guardarUsuariosExtra = function(lista){
+    og(lista);
+    (lista||[]).forEach(u=>kxPerfilGuardar(u.id, { extra:true, nombreBase:u.nombre, rol:u.rol, icono:u.icono||'👤', activo:u.activo!==false, borrado:false }));
+  };
+  const oe = window.ejecutarEliminarUsuario;
+  window.ejecutarEliminarUsuario = ejecutarEliminarUsuario = function(id){
+    const esBase = USUARIOS_BASE.some(b=>b.id===id);
+    const r = oe.apply(this, arguments);
+    if(!esBase) kxPerfilGuardar(id, { borrado:true, activo:false });
+    return r;
+  };
+})();
+// Estado (activo) e ícono de los usuarios base también se guardan en la nube
+function kxAplicarPerfilesBase(){
+  USUARIOS_BASE.forEach(u=>{
+    if(!u.nombreBase) u.nombreBase = u.nombre;
+    const p = kxPerfil(u.id); if(!p) return;
+    if(typeof p.activo==='boolean' && u.id!=='prog') u.activo = p.activo;
+    if(p.icono) u.icono = p.icono;
+  });
+}
+
+// Editar usuario (pantalla Usuarios): el campo nombre es el nombre real
+(function(){
+  const oa = window.abrirEditarUsuario;
+  window.abrirEditarUsuario = abrirEditarUsuario = function(id){
+    const r = oa.apply(this, arguments);
+    try{
+      const base = kxNombreBase(id);
+      const inp = document.getElementById('usr-nombre');
+      if(inp){ inp.value = getAlias(id) || base; inp.placeholder = 'Nombre y apellido de la persona'; }
+      let h = document.getElementById('kx36-perfil');
+      if(!h && inp){ inp.insertAdjacentHTML('afterend', '<span class="hint" id="kx36-perfil"></span>'); h = document.getElementById('kx36-perfil'); }
+      if(h) h.textContent = `Perfil: ${base} · el nombre se ve en todas las PC`;
+    }catch(e){ console.warn(e); }
+    return r;
+  };
+  const og = window.ejecutarGuardarUsuario;
+  window.ejecutarGuardarUsuario = ejecutarGuardarUsuario = function(){
+    const id = _usuarioEditandoId;
+    const nombre = kxVal('usr-nombre').trim();
+    const baseU = id ? USUARIOS_BASE.find(b=>b.id===id) : null;
+    if(baseU && nombre){
+      // El perfil base conserva su nombre ("Administrador 1"); el nombre real va aparte
+      const real = nombre===(baseU.nombreBase||baseU.nombre) ? '' : nombre;
+      document.getElementById('usr-nombre').value = baseU.nombreBase || baseU.nombre;
+      const r = og.apply(this, arguments);
+      baseU.nombre = baseU.nombreBase || baseU.nombre;
+      kxPerfilGuardar(id, { nombre: real, icono: baseU.icono, activo: baseU.activo!==false });
+      try{ const bd = JSON.parse(localStorage.getItem('belen_users_pass')||'{}'); if(bd[id]){ bd[id].alias = real; localStorage.setItem('belen_users_pass', JSON.stringify(bd)); cargarPassBD(); } }catch(_){}
+      if(usuarioActual && usuarioActual.id===id) kxRefrescarNombreActual();
+      try{ renderUsuarios(); }catch(_){}
+      return r;
+    }
+    return og.apply(this, arguments);
+  };
+})();
+
+// Al iniciar sesión, el usuario pasa a llamarse con su nombre real
+(function(){
+  const oi = window.iniciarSesion;
+  window.iniciarSesion = iniciarSesion = function(usuario){
+    const base = usuario ? (usuario.nombreBase || kxNombreBase(usuario.id) || usuario.nombre) : '';
+    const real = usuario ? getAlias(usuario.id) : '';
+    const u = usuario ? Object.assign({}, usuario, { nombreBase: base, nombre: real || base }) : usuario;
+    return oi.call(this, u);
+  };
+  const om = window.mostrarPantallaCrearPass;
+  window.mostrarPantallaCrearPass = mostrarPantallaCrearPass = function(){
+    const r = om.apply(this, arguments);
+    try{
+      const a = loginUsuarioSeleccionado ? getAlias(loginUsuarioSeleccionado.id) : '';
+      const inp = document.getElementById('login-user-alias'); if(inp && a && !inp.value) inp.value = a;
+      if(a) document.getElementById('login-pin-nombre').textContent = `${a} · ${loginUsuarioSeleccionado.nombre}`;
+    }catch(_){}
+    return r;
+  };
+})();
+function kxRefrescarNombreActual(){
+  if(!usuarioActual) return;
+  const real = getAlias(usuarioActual.id);
+  const base = usuarioActual.nombreBase || kxNombreBase(usuarioActual.id);
+  const n = real || base;
+  if(usuarioActual.nombre !== n || usuarioActual.nombreBase !== base){ usuarioActual.nombre = n; usuarioActual.nombreBase = base; }
+  try{ renderUserBadge(); }catch(_){}
+}
+window.renderUserBadge = renderUserBadge = function(){
+  const cont = document.getElementById('user-badge');
+  if(!cont || !usuarioActual) return;
+  const base = usuarioActual.nombreBase || kxNombreBase(usuarioActual.id);
+  const n = usuarioActual.nombre || base;
+  const sub = (n!==base ? base+' · ' : '') + usuarioActual.rol;
+  cont.innerHTML = `
+    <div class="ub-avatar">${kxEsc(n.charAt(0))}</div>
+    <div class="ub-info">
+      <div class="ub-nombre">${kxEsc(n)} <a href="#" title="Cambiar mi nombre" style="font-size:11px;text-decoration:none" onclick="event.preventDefault();kxCambiarMiNombre()">✏️</a></div>
+      <div class="ub-rol">${kxEsc(sub)}</div>
+    </div>
+    <button class="btn-logout" onclick="cerrarSesion()">Salir</button>`;
+};
+function kxCambiarMiNombre(){
+  if(!usuarioActual) return;
+  const actual = getAlias(usuarioActual.id) || '';
+  const n = prompt('¿Cómo querés que aparezca tu nombre en todas las PC?\n(Nombre y apellido)', actual);
+  if(n===null) return;
+  const v = n.trim().replace(/\s+/g,' ');
+  if(v.length < 2){ toast('⚠️ Escribí tu nombre','error'); return; }
+  const antes = usuarioActual.nombre;
+  setAlias(usuarioActual.id, v);
+  kxRefrescarNombreActual();
+  registrarAuditoria('Modificación', `Usuario ${usuarioActual.id}`, `Nombre visible: ${antes} → ${v}`);
+  toast(`✅ Ahora figurás como ${v} en todas las PC`,'success');
+}
+
+// Pantalla de login: nombre real grande y el perfil debajo
+(function(){
+  const ol = window.iniciarPantallaLogin;
+  window.iniciarPantallaLogin = iniciarPantallaLogin = function(){
+    try{ kxAplicarPerfilesBase(); }catch(_){}
+    return ol.apply(this, arguments);
+  };
+})();
+
+// Arranque y actualización cuando llegan nombres nuevos desde otra PC
+(function(){
+  const arrancar = ()=>{
+    try{ kxAplicarPerfilesBase(); kxMigrarAliasLocales(); }catch(e){ console.warn(e); }
+    try{ if(document.getElementById('login-overlay')?.style.display !== 'none') iniciarPantallaLogin(); }catch(_){}
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(arrancar, 150)); else setTimeout(arrancar, 150);
+  setInterval(()=>{
+    try{
+      kxAplicarPerfilesBase();
+      if(usuarioActual){
+        const real = getAlias(usuarioActual.id) || usuarioActual.nombreBase;
+        if(real && real !== usuarioActual.nombre) kxRefrescarNombreActual();
+      } else if(document.getElementById('login-overlay')?.style.display !== 'none'){
+        const sel = document.getElementById('login-pin-wrap');
+        if(!sel || !sel.classList.contains('show')) iniciarPantallaLogin();
+      }
+    }catch(_){}
+  }, 20000);
 })();
 
 </script>
