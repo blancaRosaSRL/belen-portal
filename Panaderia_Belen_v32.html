@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '36.0';
+const BELEN_BUILD = '36.1';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21417,6 +21417,91 @@ function kxCambiarMiNombre(){
       }
     }catch(_){}
   }, 20000);
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v36.1 — Escalar receta también por cantidad de HARINA
+//   "Tengo 50 kg de harina, ¿cuánto de cada cosa?" → calcula el factor
+//   con el total de harinas de la receta (como el porcentaje panadero).
+// ═══════════════════════════════════════════════════════════════
+function kxHarinasReceta(rec){
+  const l = (rec && rec.ingredientes || []).filter(ing=>!ing.rec).map(ing=>({ ing, ins:getInsumo(ing.ins) }))
+    .filter(x=>x.ins && (x.ins.uom||'kg')==='kg' && (x.ins.cat==='Harinas' || /HARINA/i.test(x.ins.desc||'')));
+  return { lista:l, total: l.reduce((s,x)=>s + (Number(x.ing.qty)||0), 0) };
+}
+function kxEscHarinaUI(){
+  if(document.getElementById('esc-harina')) return;
+  const kg = document.getElementById('esc-kg'); if(!kg) return;
+  const fila = kg.closest('.form-group').parentNode;
+  fila.insertAdjacentHTML('beforeend', `<div class="form-group" style="flex:1;min-width:160px;margin:0">
+      <label>… o esta cantidad de HARINA (kg)</label>
+      <input type="number" min="0" step="0.1" id="esc-harina" placeholder="Ej: 25">
+      <span class="hint" id="esc-harina-hint"></span></div>`);
+  const h = document.getElementById('esc-harina');
+  h.addEventListener('input', ()=>{ document.getElementById('esc-piezas').value=''; document.getElementById('esc-kg').value=''; calcularEscalado(); });
+  ['esc-piezas','esc-kg'].forEach(id=>document.getElementById(id).addEventListener('input', ()=>{ h.value=''; }, true));
+}
+// Convierte la harina pedida en kilos de masa equivalentes
+function kxEscHarinaAKg(rec){
+  const hv = parseFloat(kxVal('esc-harina'))||0; if(!(hv>0)) return null;
+  const hb = kxHarinasReceta(rec); const c = calcularRendimientoCompleto(rec);
+  if(!(hb.total>0) || !(c.pesoKg>0)) return { error:true, hb };
+  return { hv, hb, kg: hv/hb.total*c.pesoKg, factor: hv/hb.total };
+}
+(function(){
+  const oa = window.abrirEscalarReceta;
+  window.abrirEscalarReceta = abrirEscalarReceta = function(id){
+    const r = oa.apply(this, arguments);
+    try{
+      kxEscHarinaUI();
+      const rec = getReceta(id); const hb = kxHarinasReceta(rec);
+      const inp = document.getElementById('esc-harina'); inp.value = '';
+      inp.disabled = !(hb.total>0);
+      document.getElementById('esc-harina-hint').textContent = hb.total>0
+        ? `El lote base lleva ${fmtN(kxR(hb.total))} kg de harina${hb.lista.length>1?' ('+hb.lista.map(x=>x.ins.desc).join(' + ')+')':''}`
+        : 'Esta receta no tiene harina cargada';
+    }catch(e){ console.warn('v36.1:', e); }
+    return r;
+  };
+  const oc = window.calcularEscalado;
+  window.calcularEscalado = calcularEscalado = function(){
+    const rec = getReceta(window._escalandoRecetaId);
+    const x = rec ? kxEscHarinaAKg(rec) : null;
+    if(!x) return oc.apply(this, arguments);
+    const out = document.getElementById('esc-resultado');
+    if(x.error){ out.innerHTML = '⚠️ No se puede escalar por harina: la receta no tiene harina en kg o no tiene peso calculable.'; return; }
+    const kgIn = document.getElementById('esc-kg');
+    kgIn.value = kxR(x.kg, 4);
+    try{ oc.apply(this, arguments); } finally { kgIn.value = ''; }
+    try{
+      const banner = out.querySelector('div');
+      if(banner) banner.innerHTML = `🌾 Con ${fmtN(x.hv)} kg de harina (el lote base lleva ${fmtN(kxR(x.hb.total))} kg) → ` + banner.innerHTML;
+      out.querySelectorAll('tbody tr').forEach(tr=>{
+        const n = tr.children[0]?.textContent||'';
+        if(x.hb.lista.some(h=>n.includes(h.ins.desc))) tr.style.fontWeight = '700';
+      });
+    }catch(_){}
+  };
+  const oi = window.imprimirEscalado;
+  window.imprimirEscalado = imprimirEscalado = function(){
+    const rec = getReceta(window._escalandoRecetaId);
+    const x = rec ? kxEscHarinaAKg(rec) : null;
+    if(!x || x.error) return oi.apply(this, arguments);
+    const kgIn = document.getElementById('esc-kg'); kgIn.value = kxR(x.kg, 4);
+    const wo = window.open; let w = null;
+    window.open = function(){ w = wo.apply(window, arguments); return w; };
+    try{ oi.apply(this, arguments); } finally { window.open = wo; kgIn.value = ''; }
+    try{
+      if(w && w.document && w.document.body){
+        const d = w.document.createElement('div');
+        d.style.cssText = 'font:700 14px Arial;padding:8px 10px;margin:8px 0;background:#F6EFE3;border-left:4px solid #A34E17';
+        d.textContent = `🌾 Escalado por harina: ${fmtN(x.hv)} kg de harina (lote base ${fmtN(kxR(x.hb.total))} kg) · factor ×${fmtN(kxR(x.factor,3))}`;
+        w.document.body.insertBefore(d, w.document.body.firstChild);
+      }
+    }catch(_){}
+  };
 })();
 
 </script>
