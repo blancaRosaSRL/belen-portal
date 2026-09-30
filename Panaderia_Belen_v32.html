@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.6';
+const BELEN_BUILD = '37.7';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22915,6 +22915,60 @@ function kxImpConfirmar(){
   KX_QP_OPC.push({ k:'importar', ic:'📥', t:'Importar un conteo desde archivo', d:'Planillas transcriptas: fija el stock contado en cada fábrica (Dueño, Administrador).' });
   const oq = window.kxQpElegir;
   window.kxQpElegir = kxQpElegir = function(k){ if(k==='importar'){ cerrarModal('kx-modal-qp'); kxAbrirImportarConteo(); return; } return oq.apply(this, arguments); };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.7 — Arranque de cero: SOLO Dueño/Programador y UNA sola vez por fábrica
+// ═══════════════════════════════════════════════════════════════
+DB.arranquesStock = DB.arranquesStock || [];
+if(!LS_KEYS_ARRAYS.includes('arranquesStock')) LS_KEYS_ARRAYS.push('arranquesStock');
+if(!CLOUD_SYNC_ARRAYS.includes('arranquesStock')) CLOUD_SYNC_ARRAYS.push('arranquesStock');
+const KX_ARR_ROLES = ['Dueño','Programador'];
+function kxArranqueDe(f){ return (DB.arranquesStock||[]).find(a=>a && a.fab===f && !a.borrado) || null; }
+(function(){
+  const oa = window.kxAbrirImportarConteo;
+  window.kxAbrirImportarConteo = kxAbrirImportarConteo = function(){
+    const r = oa.apply(this, arguments);
+    try{
+      const chk = document.getElementById('kximp-reset'); if(!chk) return r;
+      const puede = usuarioActual && KX_ARR_ROLES.includes(usuarioActual.rol);
+      chk.checked = false; chk.disabled = !puede;
+      let n = document.getElementById('kximp-arr-nota');
+      if(!n){ chk.closest('label')?.insertAdjacentHTML('afterend', '<div id="kximp-arr-nota" style="font-size:11px;margin:4px 0 8px"></div>'); n = document.getElementById('kximp-arr-nota'); }
+      const hechos = Object.values(KX_FABRICAS).map(F=>{ const a = kxArranqueDe(F.id); return a ? `✅ ${F.nombre}: hecho el ${a.fecha} por ${a.por}` : `⏳ ${F.nombre}: pendiente`; }).join(' · ');
+      if(n) n.innerHTML = `${puede ? '' : '🔒 El arranque de cero solo lo puede hacer un Dueño o el Programador. '}Se hace una sola vez por fábrica. Estado: ${kxEsc(hechos)}`;
+    }catch(e){ console.warn('v37.7:', e); }
+    return r;
+  };
+  const oc = window.kxImpConfirmar;
+  window.kxImpConfirmar = kxImpConfirmar = function(){
+    const chk = document.getElementById('kximp-reset');
+    const reset = !!(chk && chk.checked);
+    let fabs = [];
+    if(reset){
+      if(!usuarioActual || !KX_ARR_ROLES.includes(usuarioActual.rol)){ toast('🔒 El arranque de cero solo lo puede hacer un Dueño o el Programador','error'); return; }
+      try{ fabs = Object.keys(kxImpPlan().cambios); }catch(_){}
+      const ya = fabs.filter(f=>kxArranqueDe(f));
+      if(ya.length && usuarioActual.rol!=='Programador'){
+        toast(`🔒 Fábrica ${ya.map(kxFabNombre).join(' y ')} ya tuvo su arranque de cero. Para correcciones usá el conteo normal (sin tildar "arranque de cero").`,'error'); return;
+      }
+    }
+    const firma = _kxImp && _kxImp.firma;
+    const nAntes = (DB.movimientosMP||[]).filter(m=>m.ref===firma).length;
+    const t0 = Date.now() - 5;
+    const r = oc.apply(this, arguments);
+    try{
+      const aplicado = (DB.auditoria||[]).some(a=>a && String(a.elemento||'')===`Importación de conteo ${firma}` && (Number(a.timestamp)||0) >= t0);
+      if(reset && aplicado){
+        fabs.forEach(f=>{ DB.arranquesStock.push({ id:`ARR-${f}-${Date.now().toString(36)}`, fab:f, fecha:new Date().toLocaleDateString('es-AR'), por:usuarioActual.nombre, ref:firma, _ts:Date.now() }); });
+        registrarAuditoria('Modificación', 'Arranque de cero', `Fábrica ${fabs.map(kxFabNombre).join(' y ')} · ref ${firma} · por ${usuarioActual.nombre}`);
+        guardarEnStorage();
+      }
+    }catch(e){ console.warn('v37.7 marca:', e); }
+    return r;
+  };
 })();
 
 </script>
