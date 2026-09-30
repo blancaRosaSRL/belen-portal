@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.1';
+const BELEN_BUILD = '37.2';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21886,6 +21886,156 @@ function kxActRender(){
   window.renderInventario = renderInventario = function(){ const r = ri.apply(this, arguments); try{ poner(); }catch(_){} return r; };
   const sp = window.showPage;
   window.showPage = showPage = function(){ const r = sp.apply(this, arguments); try{ poner(); }catch(_){} return r; };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.2 — STOCK A PRUEBA DE CARGAS SIMULTÁNEAS
+//
+// Problema: si dos PC cambian el stock del mismo insumo casi a la vez,
+// al sincronizar gana el registro guardado último y se pierde el cambio
+// de la otra. Los movimientos del Kardex, en cambio, NO se pierden:
+// cada uno tiene su propio identificador y se suman todos.
+//
+// Solución (cauta): cada insumo recuerda qué movimientos recientes ya
+// están incluidos en su stock (kxIds). Después de sincronizar, si en el
+// Kardex aparece un movimiento reciente de ese insumo que su stock no
+// incluye, se suma y se deja constancia en la auditoría.
+//   · Solo mira movimientos creados después de que el insumo empezó a
+//     ser seguido (kxDesde), y de los últimos KX_REC_DIAS días.
+//   · No toca insumos que todavía no tienen seguimiento: nada cambia
+//     hasta que ese insumo tenga un movimiento con esta versión.
+//   · Los cambios de stock que no generan movimiento se respetan como hoy.
+// ═══════════════════════════════════════════════════════════════
+const KX_REC_DIAS = 10;
+const KX_REC_MS = KX_REC_DIAS * 86400000;
+
+// Momento en que se creó un movimiento (va codificado en su id: KX + fecha en base 36)
+function kxMovCreado(m){
+  const s = String(m && m.id || '');
+  if(s.startsWith('KX') && s.length > 8){
+    const t = parseInt(s.slice(2, s.length-4), 36);
+    if(isFinite(t) && t > 1.6e12 && t < 4.1e12) return t;
+  }
+  return Number(m && (m._ord!=null ? m._ord : m._ts)) || 0;
+}
+function kxRecPodar(ins, ahora){
+  const lim = (ahora||Date.now()) - KX_REC_MS;
+  const vivos = new Set((DB.movimientosMP||[]).filter(m=>m.ins===ins.id && kxMovCreado(m) >= lim).map(m=>m.id));
+  ins.kxIds = (ins.kxIds||[]).filter(id=>vivos.has(id) || kxMovCreado({id}) >= lim);
+}
+// Marca de versión: solo se reconcilian movimientos creados por versiones que
+// anotan kxIds. Así, una PC sin actualizar nunca provoca un doble conteo.
+(function(){
+  const o = window.kxNuevoMov;
+  window.kxNuevoMov = kxNuevoMov = function(){ const m = o.apply(this, arguments); if(m) m.kv = 1; return m; };
+})();
+// Cada movimiento registrado en ESTA PC queda anotado en su insumo
+(function(){
+  const o = window.kxGuardarMovs;
+  window.kxGuardarMovs = kxGuardarMovs = function(movs){
+    const r = o.apply(this, arguments);
+    try{
+      const ahora = Date.now(); const toc = new Set();
+      (movs||[]).forEach(m=>{
+        const ins = getInsumo(m.ins); if(!ins) return;
+        if(!Array.isArray(ins.kxIds) || !ins.kxDesde){
+          // Al empezar el seguimiento, el stock ya incluye los movimientos que esta PC conoce;
+          // los que todavía no llegaron (cargados en otra PC) se van a sumar cuando lleguen.
+          ins.kxDesde = ahora - KX_REC_MS;
+          ins.kxIds = (DB.movimientosMP||[]).filter(x=>x.ins===ins.id && x.kv===1 && kxMovCreado(x) >= ins.kxDesde).map(x=>x.id);
+        }
+        if(!ins.kxIds.includes(m.id)) ins.kxIds.push(m.id);
+        toc.add(ins);
+      });
+      toc.forEach(ins=>{ kxRecPodar(ins, ahora); ins._ts = ahora; });
+    }catch(e){ console.warn('v37.2 anotar:', e); }
+    return r;
+  };
+})();
+
+// Al unificar, los movimientos del insumo absorbido ya están sumados al que queda
+(function(){
+  const o = window.kxUnificarInsumos; if(typeof o!=='function') return;
+  window.kxUnificarInsumos = kxUnificarInsumos = function(B, A){
+    const r = o.apply(this, arguments);
+    try{
+      const a = getInsumo(A);
+      if(a){
+        const ahora = Date.now(), lim = ahora - KX_REC_MS;
+        if(!Array.isArray(a.kxIds) || !a.kxDesde){ a.kxIds = []; a.kxDesde = lim; }
+        (DB.movimientosMP||[]).forEach(m=>{ if(m.ins===A && kxMovCreado(m) >= lim && !a.kxIds.includes(m.id)) a.kxIds.push(m.id); });
+        a._ts = ahora; guardarEnStorage();
+      }
+    }catch(e){ console.warn('v37.2 unificar:', e); }
+    return r;
+  };
+})();
+
+// Revisa todos los insumos y recupera los movimientos que quedaron afuera
+function kxReconciliarStock(origen){
+  if(typeof _kxVista!=='undefined' && _kxVista>0) return [];
+  const ahora = Date.now(), lim = ahora - KX_REC_MS;
+  const porIns = {};
+  (DB.movimientosMP||[]).forEach(m=>{ if(m && m.ins) (porIns[m.ins] = porIns[m.ins] || []).push(m); });
+  const arreglos = [];
+  (DB.inventario||[]).forEach(ins=>{
+    if(!ins || !Array.isArray(ins.kxIds) || !ins.kxDesde) return;
+    const ya = new Set(ins.kxIds);
+    const faltan = (porIns[ins.id]||[]).filter(m=>{
+      const c = kxMovCreado(m);
+      return m.kv===1 && c > ins.kxDesde && c >= lim && !ya.has(m.id) && isFinite(Number(m.d)) && Number(m.d)!==0;
+    });
+    if(!faltan.length) return;
+    const antes = Number(ins.stock)||0;
+    let total = antes; const dep = Object.assign({}, ins.stockDep);
+    faltan.sort((a,b)=>kxMovCreado(a)-kxMovCreado(b)).forEach(m=>{
+      const d = Number(m.d);
+      total = Math.max(0, +(total + d).toFixed(4));
+      const f = m.dep || (typeof KX_FAB_P!=='undefined' ? KX_FAB_P : 'SAR');
+      if(typeof KX_FAB_P!=='undefined' && f!==KX_FAB_P) dep[f] = Math.max(0, +((Number(dep[f])||0) + d).toFixed(4));
+      ins.kxIds.push(m.id);
+    });
+    ins.stock = total;
+    if(Object.keys(dep).length) ins.stockDep = dep;
+    ins._ts = ahora;
+    kxRecPodar(ins, ahora);
+    arreglos.push({ ins, antes, despues: total, movs: faltan });
+  });
+  if(arreglos.length){
+    try{ guardarEnStorage(); }catch(_){}
+    arreglos.forEach(a=>{
+      try{
+        registrarAuditoria('Modificación', `Stock ${a.ins.id} — ${a.ins.desc}`,
+          `Recuperado tras carga simultánea en otra PC (${origen||'sincronización'}): ${fmtN(a.antes)} → ${fmtN(a.despues)} ${a.ins.uom||''} · ` +
+          a.movs.map(m=>`${m.d>0?'+':''}${fmtN(m.d)} (${m.tipo}${m.dep?' · '+(typeof kxFabNombre==='function'?kxFabNombre(m.dep):m.dep):''} · ${m.u||'—'})`).join(' · '));
+      }catch(_){}
+    });
+    try{ toast(`🔄 Se recuperaron ${arreglos.length} movimiento(s) de stock cargados al mismo tiempo en otra PC`,'success'); }catch(_){}
+    try{ const p = document.querySelector('.page.active'); if(p && p.id==='page-inventario') renderInventario(); }catch(_){}
+  }
+  return arreglos;
+}
+
+// Se ejecuta después de sincronizar, al leer datos del disco y al abrir la app
+(function(){
+  ['sincronizarNube','pullSilencioso'].forEach(n=>{
+    const o = window[n]; if(typeof o!=='function') return;
+    window[n] = async function(){
+      const r = await o.apply(this, arguments);
+      try{ kxReconciliarStock(n==='pullSilencioso' ? 'descarga automática' : 'sincronización'); }catch(e){ console.warn('v37.2 reconciliar:', e); }
+      return r;
+    };
+  });
+  const oc = window.cargarDesdeStorage;
+  if(typeof oc==='function') window.cargarDesdeStorage = cargarDesdeStorage = function(){
+    const r = oc.apply(this, arguments);
+    try{ setTimeout(()=>kxReconciliarStock('datos de otra ventana'), 0); }catch(_){}
+    return r;
+  };
+  const ini = ()=>setTimeout(()=>{ try{ kxReconciliarStock('inicio'); }catch(_){} }, 1500);
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ini); else ini();
 })();
 
 </script>
