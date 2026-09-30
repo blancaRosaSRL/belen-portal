@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.4';
+const BELEN_BUILD = '37.5';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22532,6 +22532,198 @@ function kxInfFabImprimir(){
     return o.apply(this, arguments);
   };
 })();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.5 — (1) Sincronización automática para TODOS los roles
+//         (2) Cierre mensual por fábrica: foto congelada + bloqueo del mes
+//         (3) Permisos por rol en traslados
+//         (4) Backup completo antes de cerrar o restaurar una fábrica, y
+//             restauración de una sola fábrica a la foto del cierre
+// ═══════════════════════════════════════════════════════════════
+const KX_ROLES_SYNC_ORIG = ['Dueño','Administrador','Programador'];
+
+// ─── (1) Sincronización para todos los roles ───────────────────
+let _kxSyncTodos = null;
+function kxIniciarSyncTodos(){
+  clearInterval(_kxSyncTodos);
+  _kxSyncTodos = setInterval(async ()=>{
+    try{
+      if(!SYNC_ACTIVO || !usuarioActual || !navigator.onLine) return;
+      if(KX_ROLES_SYNC_ORIG.includes(usuarioActual.rol)) return;   // esos roles ya tienen su propio ciclo
+      if(typeof _kxVista!=='undefined' && _kxVista>0) return;
+      const hay = typeof _syncQueue!=='undefined' && _syncQueue && _syncQueue.length > 0;
+      if(hay) await sincronizarNube(true); else await pullSilencioso();
+    }catch(e){ console.warn('v37.5 sync:', e); }
+  }, 45000);
+}
+(function(){
+  const oi = window.iniciarSesion;
+  window.iniciarSesion = iniciarSesion = function(u){
+    const r = oi.apply(this, arguments);
+    try{ if(SYNC_ACTIVO && u && !KX_ROLES_SYNC_ORIG.includes(u.rol)){ kxIniciarSyncTodos(); setTimeout(()=>{ try{ pullSilencioso(); }catch(_){} }, 3000); } }catch(_){}
+    return r;
+  };
+  const oc = window.cerrarSesion;
+  if(typeof oc==='function') window.cerrarSesion = cerrarSesion = function(){
+    try{ if(usuarioActual && !KX_ROLES_SYNC_ORIG.includes(usuarioActual.rol) && typeof _syncQueue!=='undefined' && _syncQueue.length && navigator.onLine) sincronizarNube(true); }catch(_){}
+    clearInterval(_kxSyncTodos); return oc.apply(this, arguments);
+  };
+})();
+
+// ─── (3) Permisos de traslados ─────────────────────────────────
+const KX_TR_PERM = {
+  pedir:   ['Dueño','Administrador','Administración','Producción','Programador'],
+  enviar:  ['Dueño','Administrador','Administración','Programador'],
+  recibir: ['Dueño','Administrador','Administración','Producción','Logística','Programador'],
+  anular:  ['Dueño','Administrador','Programador']
+};
+const KX_TR_ACC = { pedir:'pedir mercadería', enviar:'enviar mercadería', recibir:'recibir mercadería', anular:'anular pedidos' };
+function kxTrPuede(acc){ return !!usuarioActual && (KX_TR_PERM[acc]||[]).includes(usuarioActual.rol); }
+function kxTrExigir(acc){ if(kxTrPuede(acc)) return true; toast(`🔒 Tu rol (${usuarioActual?usuarioActual.rol:'—'}) no puede ${KX_TR_ACC[acc]}`,'error'); return false; }
+(function(){
+  const oF = window.kxTrForm;
+  window.kxTrForm = kxTrForm = function(modo){ if((modo==='pedir' && !kxTrExigir('pedir')) || (modo==='enviar' && !kxTrExigir('enviar'))) return; return oF.apply(this, arguments); };
+  const oE = window.kxTrEnviarForm; window.kxTrEnviarForm = kxTrEnviarForm = function(){ if(!kxTrExigir('enviar')) return; return oE.apply(this, arguments); };
+  const oR = window.kxTrRecibirForm; window.kxTrRecibirForm = kxTrRecibirForm = function(){ if(!kxTrExigir('recibir')) return; return oR.apply(this, arguments); };
+  const oA = window.kxTrAnular; window.kxTrAnular = kxTrAnular = function(){ if(!kxTrExigir('anular')) return; return oA.apply(this, arguments); };
+  const oC = window.kxTrConfirmar;
+  window.kxTrConfirmar = kxTrConfirmar = function(){
+    const m = _kxTrF && _kxTrF.modo; const acc = m==='pedir' ? 'pedir' : m==='recibir' ? 'recibir' : 'enviar';
+    if(!kxTrExigir(acc)) return; return oC.apply(this, arguments);
+  };
+  const oL = window.kxTrLista;
+  window.kxTrLista = kxTrLista = function(){
+    const r = oL.apply(this, arguments);
+    try{
+      const body = document.getElementById('kxtr-body');
+      if(body) body.insertAdjacentHTML('beforeend', `<div style="margin-top:12px;font-size:11px;color:var(--texto-2)">🔐 Con tu rol (${kxEsc(usuarioActual?usuarioActual.rol:'—')}) podés: ${
+        Object.keys(KX_TR_PERM).map(a=>`${kxTrPuede(a)?'✅':'🚫'} ${KX_TR_ACC[a]}`).join(' · ')}</div>`);
+    }catch(_){}
+    return r;
+  };
+})();
+
+// ─── (2) Cierre mensual por fábrica ───────────────────────────
+DB.cierresFab = DB.cierresFab || [];
+if(!LS_KEYS_ARRAYS.includes('cierresFab')) LS_KEYS_ARRAYS.push('cierresFab');
+if(!CLOUD_SYNC_ARRAYS.includes('cierresFab')) CLOUD_SYNC_ARRAYS.push('cierresFab');
+try{ KX_ORIGEN.restauracion = '⏪ Restauración al cierre'; }catch(_){}
+const KX_CIERRE_ROLES = ['Dueño','Administrador','Programador'];
+const KX_REABRIR_ROLES = ['Dueño','Programador'];
+function kxCierreFab(fab, periodo){ return (DB.cierresFab||[]).find(c=>c && c.fab===fab && c.periodo===periodo && !c.borrado) || null; }
+function kxFabMesCerrado(fab, periodo){ const c = kxCierreFab(fab, periodo); return !!(c && c.estado==='cerrado'); }
+(function(){
+  const oB = window.kxFechaBloqueada;
+  window.kxFechaBloqueada = kxFechaBloqueada = function(f){
+    if(oB.apply(this, arguments)) return true;
+    return !!(f && _kxFab && kxFabMesCerrado(_kxFab, String(f).slice(0,7)));
+  };
+  const oAv = window.kxAvisoBloqueo;
+  window.kxAvisoBloqueo = kxAvisoBloqueo = function(f){
+    const p = String(f||'').slice(0,7);
+    if(_kxFab && kxFabMesCerrado(_kxFab, p) && !(typeof kxPeriodoCerrado==='function' && kxPeriodoCerrado(p))){
+      const c = kxCierreFab(_kxFab, p);
+      toast(`🔒 ${p.split('-').reverse().join('/')} está cerrado en Fábrica ${kxFabNombre(_kxFab)} (lo cerró ${c.por} el ${c.fecha}). Cargá con fecha del mes siguiente o pedí que lo reabran.`,'error');
+      return;
+    }
+    return oAv.apply(this, arguments);
+  };
+})();
+function kxCerrarMesFab(){
+  const p = kxVal('kxif-mes'), fab = kxVal('kxif-fab');
+  if(fab==='CMP'){ toast('⚠️ Elegí una fábrica para cerrar','error'); return; }
+  if(!usuarioActual || !KX_CIERRE_ROLES.includes(usuarioActual.rol)){ toast('🔒 Solo Dueño, Administrador o Programador pueden cerrar el mes','error'); return; }
+  if(kxFabMesCerrado(fab, p)){ toast('ℹ️ Ese mes ya está cerrado para esta fábrica','error'); return; }
+  const avisos = [];
+  const camino = (DB.traslados||[]).filter(t=>t.estado==='Enviado' && !t.borrado && (t.origen===fab || t.destino===fab));
+  if(camino.length) avisos.push(`• Hay ${camino.length} traslado(s) en camino (${camino.map(t=>t.id).join(', ')}).`);
+  const neg = (DB.inventario||[]).filter(i=>kxStockFab(i, fab) < -1e-6);
+  if(neg.length) avisos.push(`• ${neg.length} insumo(s) con stock negativo en esta fábrica.`);
+  const fin = p === kxHoy().slice(0,7);
+  if(fin) avisos.push('• El mes todavía no terminó: lo que se cargue después con fecha de este mes quedará bloqueado.');
+  if(!confirm(`Cerrar ${p.split('-').reverse().join('/')} en Fábrica ${kxFabNombre(fab)}.\n\nSe guarda una foto congelada del informe y no se podrán cargar movimientos con fecha de ese mes en esta fábrica.${avisos.length?'\n\nAntes de cerrar, revisá:\n'+avisos.join('\n'):''}\n\nSe hace un backup completo antes. ¿Cerrar el mes?`)) return;
+  try{ kxBackupAntesDe('cierre-fabrica-'+fab+'-'+p); }catch(e){ console.warn('backup:', e); }
+  const filas = kxInformeFab(p, fab).map(r=>({ ins:r.ins.id, desc:r.ins.desc, uom:r.ins.uom||'', precio:Number(r.ins.precio)||0,
+    si:r.si, compras:r.compras, sinFac:r.sinFac, trIn:r.trIn, trOut:r.trOut, consumo:r.consumo, merma:r.merma, ajuste:+(r.ajuste + r.inicial).toFixed(4), sf:r.sf }));
+  const c = { id:`CF-${fab}-${p}`, fab, periodo:p, estado:'cerrado', filas,
+    fecha: new Date().toLocaleString('es-AR'), por: usuarioActual.nombre, _ts: Date.now() };
+  const i = (DB.cierresFab||[]).findIndex(x=>x.id===c.id);
+  if(i>=0) DB.cierresFab.splice(i, 1, Object.assign({}, DB.cierresFab[i], c)); else DB.cierresFab.push(c);
+  registrarAuditoria('Creación', `Cierre ${c.id}`, `Mes ${p} cerrado en Fábrica ${kxFabNombre(fab)} · ${filas.length} insumos · stock final ${fmt$(filas.reduce((s,f)=>s+f.sf*f.precio,0))}`);
+  guardarEnStorage(); toast(`🔒 ${p} cerrado en Fábrica ${kxFabNombre(fab)}`,'success'); kxInfFabRender();
+}
+function kxReabrirMesFab(){
+  const p = kxVal('kxif-mes'), fab = kxVal('kxif-fab'); const c = kxCierreFab(fab, p); if(!c) return;
+  if(!usuarioActual || !KX_REABRIR_ROLES.includes(usuarioActual.rol)){ toast('🔒 Solo un Dueño puede reabrir un mes cerrado','error'); return; }
+  const mot = prompt(`¿Por qué se reabre ${p} en Fábrica ${kxFabNombre(fab)}?`); if(mot===null) return;
+  if(!mot.trim()){ toast('⚠️ Escribí el motivo','error'); return; }
+  c.estado = 'reabierto'; c.reabierto = `${usuarioActual.nombre} · ${new Date().toLocaleString('es-AR')} · ${mot.trim()}`; c._ts = Date.now();
+  registrarAuditoria('Modificación', `Cierre ${c.id}`, `Reabierto: ${mot.trim()}`);
+  guardarEnStorage(); toast(`🔓 ${p} reabierto en Fábrica ${kxFabNombre(fab)}`,'success'); kxInfFabRender();
+}
+// ─── (4) Restaurar una sola fábrica a la foto del cierre ────────
+function kxAjusteFab(fab, cambios, nota){
+  const antes = kxSnapshotStock();
+  cambios.forEach(x=>{ const i = getInsumo(x.ins); if(i) i.stock = Math.max(0, +x.objetivo.toFixed(4)); });
+  kxRegistrarDiferencias(antes, { fecha: kxHoy(), tipo:'ajuste', org:'restauracion', nota });
+}
+kxEnFab('kxAjusteFab', { mut:true, fab: f=>f });
+function kxRestaurarFab(){
+  const p = kxVal('kxif-mes'), fab = kxVal('kxif-fab'); const c = kxCierreFab(fab, p); if(!c) return;
+  if(!usuarioActual || !KX_REABRIR_ROLES.includes(usuarioActual.rol)){ toast('🔒 Solo un Dueño puede restaurar una fábrica','error'); return; }
+  if(_kxFab!==fab){ toast(`⚠️ Para restaurar tenés que estar en Fábrica ${kxFabNombre(fab)}`,'error'); return; }
+  if(kxFechaBloqueada(kxHoy())){ kxAvisoBloqueo(kxHoy()); return; }
+  const cambios = c.filas.map(f=>{ const i = getInsumo(f.ins); return i ? { ins:f.ins, desc:f.desc, uom:f.uom, actual:kxStockFab(i, fab), objetivo:f.sf } : null; })
+    .filter(x=>x && Math.abs(x.actual - x.objetivo) > 1e-6);
+  if(!cambios.length){ toast('ℹ️ El stock de esta fábrica ya coincide con la foto del cierre','success'); return; }
+  const lista = cambios.slice(0,15).map(x=>`• ${x.desc}: ${fmtN(x.actual)} → ${fmtN(x.objetivo)} ${x.uom}`).join('\n') + (cambios.length>15?`\n… y ${cambios.length-15} más`:'');
+  const txt = prompt(`⚠️ RESTAURAR Fábrica ${kxFabNombre(fab)} al cierre de ${p}\n\nEl stock de ${cambios.length} insumo(s) vuelve al de la foto. Todo lo cargado después en esta fábrica queda en el Kardex, pero el stock se corrige con un ajuste.\n\n${lista}\n\nSe hace un backup completo antes. Para confirmar escribí RESTAURAR:`);
+  if(txt===null) return;
+  if(txt.trim().toUpperCase()!=='RESTAURAR'){ toast('Cancelado: no se escribió RESTAURAR','error'); return; }
+  try{ kxBackupAntesDe('restaurar-fabrica-'+fab); }catch(e){ console.warn('backup:', e); }
+  kxAjusteFab(fab, cambios, `Restauración de Fábrica ${kxFabNombre(fab)} al cierre ${p}`);
+  registrarAuditoria('Modificación', `Restauración ${c.id}`, `${cambios.length} insumo(s) vueltos a la foto del cierre por ${usuarioActual.nombre}`);
+  toast(`⏪ Fábrica ${kxFabNombre(fab)} restaurada a la foto de ${p}`,'success'); kxInfFabRender();
+}
+// Informe por fábrica: estado del cierre, foto congelada y botones
+(function(){
+  const o = window.kxInfFabRender;
+  window.kxInfFabRender = kxInfFabRender = function(){
+    const r = o.apply(this, arguments);
+    try{
+      const p = kxVal('kxif-mes'), fab = kxVal('kxif-fab'); const res = document.getElementById('kxif-res');
+      if(!res || fab==='CMP') return r;
+      const c = kxCierreFab(fab, p); const puedeC = usuarioActual && KX_CIERRE_ROLES.includes(usuarioActual.rol), puedeR = usuarioActual && KX_REABRIR_ROLES.includes(usuarioActual.rol);
+      let barra = '';
+      if(c && c.estado==='cerrado'){
+        const actual = kxInformeFab(p, fab); const mapa = {}; actual.forEach(x=>{ mapa[x.ins.id] = x.sf; });
+        const dif = c.filas.filter(f=>Math.abs((mapa[f.ins]??0) - f.sf) > 1e-6);
+        barra = `<div style="padding:10px 12px;border-radius:8px;background:#ECEFF1;border:1px solid #B0BEC5;margin-bottom:10px;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span>🔒 <strong>Mes cerrado</strong> en Fábrica ${kxFabNombre(fab)} por ${kxEsc(c.por)} el ${kxEsc(c.fecha)}. Foto congelada: stock final ${fmt$(c.filas.reduce((s,f)=>s+f.sf*f.precio,0))}.</span>
+          ${dif.length?`<span style="color:#c0392b;font-weight:700">⚠️ ${dif.length} insumo(s) cambiaron después del cierre (movimientos con fecha del mes cargados antes de cerrar en otra PC o reabierto).</span>`:'<span style="color:#1e8449">✅ Coincide con la foto</span>'}
+          <span style="flex:1"></span>
+          <button class="btn-secondary" onclick="kxVerFotoFab()">📸 Ver foto congelada</button>
+          ${puedeR?'<button class="btn-secondary" onclick="kxReabrirMesFab()">🔓 Reabrir</button><button class="btn-danger" onclick="kxRestaurarFab()">⏪ Restaurar fábrica a esta foto</button>':''}</div>`;
+      } else {
+        barra = `<div style="padding:8px 12px;border-radius:8px;background:var(--miga,#f6efe3);margin-bottom:10px;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span>📂 Mes abierto en Fábrica ${kxFabNombre(fab)}${c&&c.estado==='reabierto'?` · reabierto (${kxEsc(c.reabierto)})`:''}.</span><span style="flex:1"></span>
+          ${puedeC?'<button class="btn-primary" onclick="kxCerrarMesFab()">🔒 Cerrar el mes de esta fábrica</button>':''}</div>`;
+      }
+      res.insertAdjacentHTML('afterbegin', barra);
+    }catch(e){ console.warn('v37.5 informe:', e); }
+    return r;
+  };
+})();
+function kxVerFotoFab(){
+  const p = kxVal('kxif-mes'), fab = kxVal('kxif-fab'); const c = kxCierreFab(fab, p); if(!c) return;
+  const n = v => v ? fmtN(+Number(v).toFixed(3)) : '—';
+  document.getElementById('kxif-res').innerHTML = `<div style="padding:8px 12px;border-radius:8px;background:#ECEFF1;margin-bottom:8px;font-size:13px">📸 Foto congelada del cierre ${kxEsc(c.id)} · ${kxEsc(c.por)} · ${kxEsc(c.fecha)} <button class="btn-secondary" style="margin-left:8px" onclick="kxInfFabRender()">Volver al informe</button></div>
+    <div class="table-wrap" style="max-height:52vh;overflow:auto"><table style="font-size:12px"><thead><tr><th>Insumo</th><th style="text-align:right">Inicial</th><th style="text-align:right">Compras</th><th style="text-align:right">Tr +</th><th style="text-align:right">Tr −</th><th style="text-align:right">Consumo</th><th style="text-align:right">Merma</th><th style="text-align:right">Ajuste</th><th style="text-align:right">Final</th><th style="text-align:right">$ Final</th></tr></thead><tbody>
+    ${c.filas.map(f=>`<tr><td><strong>${kxEsc(f.desc)}</strong> <span style="font-size:10px">${kxEsc(f.uom)}</span></td><td style="text-align:right">${n(f.si)}</td><td style="text-align:right">${n(f.compras+f.sinFac)}</td><td style="text-align:right">${n(f.trIn)}</td><td style="text-align:right">${n(f.trOut)}</td><td style="text-align:right">${n(f.consumo)}</td><td style="text-align:right">${n(f.merma)}</td><td style="text-align:right">${n(f.ajuste)}</td><td style="text-align:right;font-weight:700">${n(f.sf)}</td><td style="text-align:right">${fmt$(f.sf*f.precio)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 
 </script>
 </body>
