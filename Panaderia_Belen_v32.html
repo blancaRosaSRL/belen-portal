@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.0';
+const BELEN_BUILD = '37.1';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21743,6 +21743,149 @@ function kxFabAplicar(){
     }catch(e){ console.warn('v37 inventario:', e); }
     return r;
   };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.1 — Ver lo que carga cada fábrica
+//   · Marca 🏭 SAR / 🏭 BAY en Materia Prima y Kardex
+//   · Filtro "Fábrica: Todas / Sarmiento / Bayofet" en las dos pantallas
+//   · Panel "Actividad por fábrica" del día, lado a lado
+// ═══════════════════════════════════════════════════════════════
+let _kxFiltFab = { mp:'', kx:'' };
+function kxDepDe(x){ return (x && x.dep) || KX_FAB_P; }
+function kxFabTag(dep){
+  const f = KX_FABRICAS[dep] || KX_FABRICAS[KX_FAB_P];
+  return `<span class="kx-fab-tag" style="display:inline-block;background:${f.claro};color:${f.color};border:1px solid ${f.color};border-radius:10px;padding:0 7px;font-size:10px;font-weight:800;white-space:nowrap">🏭 ${f.nombre}</span>`;
+}
+function kxFabSelect(id, valor, onch){
+  return `<select id="${id}" onchange="${onch}" title="Filtrar por fábrica" style="padding:8px 10px;border:2px solid var(--kx-fab-color,#2E7D32);border-radius:8px;font-weight:700;font-size:13px">
+    <option value="">🏭 Todas las fábricas</option>${Object.values(KX_FABRICAS).map(f=>`<option value="${f.id}" ${valor===f.id?'selected':''}>🏭 ${f.nombre}</option>`).join('')}</select>`;
+}
+
+// ─── Materia Prima ─────────────────────────────────────────────
+(function(){
+  const o = window.renderMateriaPrima;
+  window.renderMateriaPrima = renderMateriaPrima = function(){
+    const r = o.apply(this, arguments);
+    try{
+      const tb = document.querySelector('#materia-tab-ingresos .toolbar');
+      if(tb && !document.getElementById('kx-mp-fab')){
+        tb.insertAdjacentHTML('afterbegin', kxFabSelect('kx-mp-fab', _kxFiltFab.mp, "_kxFiltFab.mp=this.value;renderMateriaPrima()"));
+      }
+      const sel = document.getElementById('kx-mp-fab'); if(sel) sel.value = _kxFiltFab.mp;
+      let vis = 0, tot = 0;
+      document.querySelectorAll('#tbl-materia tr').forEach(tr=>{
+        const b = tr.querySelector('button[onclick^="abrirEditarMateriaPrima("]'); if(!b) return;
+        const idx = parseInt((b.getAttribute('onclick').match(/\((\d+)\)/)||[])[1], 10);
+        const reg = DB.materiaPrima[idx]; if(!reg) return;
+        tot++;
+        const dep = kxDepDe(reg);
+        if(!tr.querySelector('.kx-fab-tag')) tr.children[0]?.insertAdjacentHTML('beforeend', '<br>' + kxFabTag(dep));
+        const ok = !_kxFiltFab.mp || dep===_kxFiltFab.mp;
+        tr.style.display = ok ? '' : 'none'; if(ok) vis++;
+      });
+      let info = document.getElementById('kx-mp-fab-info');
+      if(!info && tb){ tb.insertAdjacentHTML('beforeend', '<span id="kx-mp-fab-info" style="font-size:12px;color:var(--texto-2)"></span>'); info = document.getElementById('kx-mp-fab-info'); }
+      if(info) info.textContent = _kxFiltFab.mp ? `Mostrando ${vis} de ${tot} ingresos (Fábrica ${kxFabNombre(_kxFiltFab.mp)})` : '';
+    }catch(e){ console.warn('v37.1 MP:', e); }
+    return r;
+  };
+})();
+
+// ─── Kardex ────────────────────────────────────────────────────
+(function(){
+  const of = window.kxMovsFiltrados;
+  window.kxMovsFiltrados = kxMovsFiltrados = function(){
+    const l = of.apply(this, arguments);
+    return _kxFiltFab.kx ? l.filter(m=>kxDepDe(m)===_kxFiltFab.kx) : l;
+  };
+  const orm = window.kxRenderMovs;
+  window.kxRenderMovs = kxRenderMovs = function(){
+    const r = orm.apply(this, arguments);
+    try{
+      const tipo = document.getElementById('kx-f-tipo');
+      if(tipo && !document.getElementById('kx-kx-fab')){
+        tipo.insertAdjacentHTML('beforebegin', kxFabSelect('kx-kx-fab', _kxFiltFab.kx, "_kxFiltFab.kx=this.value;kxRenderMovs()"));
+      }
+      const sel = document.getElementById('kx-kx-fab'); if(sel) sel.value = _kxFiltFab.kx;
+      const porId = {}; (DB.movimientosMP||[]).forEach(m=>{ porId[m.id] = m; });
+      document.querySelectorAll('#kx-tbl-movs tr').forEach(tr=>{
+        if(tr.querySelector('.kx-fab-tag')) return;
+        const mono = tr.querySelector('td .mono'); if(!mono) return;
+        const id = (mono.textContent.split('·')[1]||'').trim(); const m = porId[id]; if(!m) return;
+        tr.children[0]?.insertAdjacentHTML('beforeend', '<br>' + kxFabTag(kxDepDe(m)));
+        if(m.sdDep!=null && tr.children[7]) tr.children[7].insertAdjacentHTML('beforeend', `<div style="font-size:10px;color:var(--texto-2)">${kxFabNombre(kxDepDe(m))}: ${fmtN(m.sdDep)}</div>`);
+      });
+    }catch(e){ console.warn('v37.1 kardex:', e); }
+    return r;
+  };
+})();
+
+// ─── Panel "Actividad por fábrica" ─────────────────────────────
+const KX_ACT_ICON = { compra:'🚚 Compra', inicial:'📋 Stock inicial', conteo:'🔢 Conteo', produccion:'🏭 Producción', manual:'✍️ Manual', correccion:'🛠️ Corrección', unificacion:'🔗 Unificación' };
+function kxActividadTexto(m){
+  if(m.tipo==='merma') return '🗑️ Merma';
+  if(m.org==='manual' && m.tipo==='ingreso') return '📥 Llegó sin factura';
+  if(m.org==='manual' && m.tipo==='egreso') return '📤 Egreso';
+  return KX_ACT_ICON[m.org] || (m.tipo==='ingreso' ? '📥 Ingreso' : '📤 Egreso');
+}
+function kxAbrirActividad(dia){
+  let m = document.getElementById('kx-modal-act');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-act';
+    m.innerHTML = `<div class="modal" style="max-width:1100px;width:96vw"><div class="modal-header"><span>📋</span><h2>Actividad por fábrica</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-act')">✕</button></div>
+      <div class="modal-body">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <label style="font-weight:700;font-size:12px">📅 Día</label><input type="date" id="kx-act-dia" style="padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px">
+          <button class="btn-secondary" onclick="kxActDia(-1)">◀ Anterior</button><button class="btn-secondary" onclick="document.getElementById('kx-act-dia').value=kxHoy();kxActRender()">Hoy</button><button class="btn-secondary" onclick="kxActDia(1)">Siguiente ▶</button>
+          <span style="font-size:11px;color:var(--texto-2)">Para ver lo último de la otra fábrica, tocá ☁️↓ en la barra superior.</span>
+        </div>
+        <div id="kx-act-cols" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px"></div>
+      </div></div>`;
+    document.body.appendChild(m);
+    document.getElementById('kx-act-dia').addEventListener('change', kxActRender);
+  }
+  document.getElementById('kx-act-dia').value = dia || kxHoy();
+  kxActRender(); abrirModal('kx-modal-act');
+}
+function kxActDia(n){ const e = document.getElementById('kx-act-dia'); const d = new Date((e.value||kxHoy())+'T12:00:00'); d.setDate(d.getDate()+n); e.value = d.toISOString().slice(0,10); kxActRender(); }
+function kxActRender(){
+  const dia = kxVal('kx-act-dia') || kxHoy();
+  const hora = ts => ts ? new Date(ts).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '—';
+  document.getElementById('kx-act-cols').innerHTML = Object.values(KX_FABRICAS).map(f=>{
+    const movs = (DB.movimientosMP||[]).filter(x=>x.f===dia && kxDepDe(x)===f.id).sort((a,b)=>(b._ts||0)-(a._ts||0));
+    const ords = (DB.ordenes||[]).filter(o=>o.fecha===dia && kxDepDe(o)===f.id && o.estado!=='Ejecutada');
+    const cuenta = t => movs.filter(x=>kxActividadTexto(x).startsWith(t)).length;
+    const fila = x=>{ const ins = getInsumo(x.ins); const u = ins?.uom||'';
+      return `<tr><td style="white-space:nowrap">${hora(x._ts)}</td><td>${kxActividadTexto(x)}</td>
+        <td><strong>${kxEsc(x.ds||x.ins)}</strong>${x.ref?`<div style="font-size:10px;color:var(--texto-2)">${kxEsc(x.ref)}</div>`:''}</td>
+        <td style="text-align:right;font-weight:700;color:${x.d>=0?'#1e8449':'#c0392b'};white-space:nowrap">${x.d>0?'+':''}${fmtN(x.d)} ${kxEsc(u)}${ins&&kxPres(ins)?`<div style="font-size:10px;font-weight:400;color:var(--texto-2)">${kxPresTxt(ins,Math.abs(x.d))}</div>`:''}</td>
+        <td style="font-size:11px">${kxEsc(x.u||'—')}</td></tr>`; };
+    return `<div style="border:2px solid ${f.color};border-radius:12px;overflow:hidden">
+      <div style="background:${f.color};color:#fff;padding:8px 12px;font-weight:800">🏭 Fábrica ${f.nombre} ${_kxFab===f.id?'<span style="font-weight:400;font-size:11px">(donde estás)</span>':''}</div>
+      <div style="padding:8px 12px;background:${f.claro};font-size:12px;display:flex;gap:12px;flex-wrap:wrap">
+        <span>🚚 Compras <strong>${cuenta('🚚')}</strong></span><span>🗑️ Mermas <strong>${cuenta('🗑️')}</strong></span>
+        <span>🔢 Conteos <strong>${cuenta('🔢')+cuenta('📋')}</strong></span><span>🏭 Producción <strong>${cuenta('🏭')}</strong></span>
+        <span>📅 Órdenes pendientes <strong>${ords.length}</strong></span></div>
+      ${movs.length ? `<div class="table-wrap" style="max-height:420px;overflow:auto"><table style="font-size:12px"><thead><tr><th>Hora</th><th>Qué</th><th>Insumo</th><th style="text-align:right">Cantidad</th><th>Quién</th></tr></thead><tbody>${movs.map(fila).join('')}</tbody></table></div>`
+        : '<div style="padding:18px;text-align:center;color:var(--texto-2);font-size:13px">Sin movimientos de stock este día</div>'}
+      ${ords.length ? `<div style="padding:8px 12px;font-size:12px;border-top:1px solid var(--borde,#eee)"><strong>Órdenes sin ejecutar:</strong> ${ords.map(o=>`${kxEsc(o.nro)} ${kxEsc(o.producto)} (${kxEsc(o.estado)})`).join(' · ')}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+(function(){
+  const poner = ()=>{
+    const add = (sel, id)=>{ const tb = document.querySelector(sel); if(tb && !document.getElementById(id)){ const b = document.createElement('button'); b.id = id; b.className = 'btn-secondary'; b.textContent = '📋 Actividad por fábrica'; b.onclick = ()=>kxAbrirActividad(); tb.appendChild(b); } };
+    add('#page-inventario .toolbar', 'kx-act-btn-inv');
+    add('#page-kardex .toolbar', 'kx-act-btn-kx');
+  };
+  const ri = window.renderInventario;
+  window.renderInventario = renderInventario = function(){ const r = ri.apply(this, arguments); try{ poner(); }catch(_){} return r; };
+  const sp = window.showPage;
+  window.showPage = showPage = function(){ const r = sp.apply(this, arguments); try{ poner(); }catch(_){} return r; };
 })();
 
 </script>
