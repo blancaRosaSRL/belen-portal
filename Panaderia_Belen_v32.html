@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.2';
+const BELEN_BUILD = '37.3';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22036,6 +22036,329 @@ function kxReconciliarStock(origen){
   };
   const ini = ()=>setTimeout(()=>{ try{ kxReconciliarStock('inicio'); }catch(_){} }, 1500);
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ini); else ini();
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.3 — TRASLADOS ENTRE FÁBRICAS + MÍNIMOS POR FÁBRICA
+//   Pedido (lo hace la fábrica que necesita) → Envío (resta en la que manda)
+//   → Recepción (suma en la que recibe; la diferencia queda como merma).
+//   Los movimientos de traslado no cuentan como compra ni como consumo.
+// ═══════════════════════════════════════════════════════════════
+DB.traslados = DB.traslados || [];
+if(!LS_KEYS_ARRAYS.includes('traslados')) LS_KEYS_ARRAYS.push('traslados');
+if(!CLOUD_SYNC_ARRAYS.includes('traslados')) CLOUD_SYNC_ARRAYS.push('traslados');
+try{ KX_ORIGEN.traslado = '🚚 Traslado entre fábricas'; }catch(_){}
+try{ KX_MOTIVOS.traslado = '🚚 Diferencia en traslado'; }catch(_){}
+try{ KX_ACT_ICON.traslado = '🚚 Traslado'; }catch(_){}
+(function(){
+  const o = window.kxBadgeTipo;
+  if(typeof o==='function') window.kxBadgeTipo = kxBadgeTipo = function(m){
+    return m && m.tipo==='traslado' ? `<span class="badge" style="background:#E3F2FD;color:#1565C0">🚚 Traslado</span>` : o.apply(this, arguments);
+  };
+})();
+
+// ─── Mínimos y máximos por fábrica (dentro de la vista de cada fábrica) ───
+(function(){
+  const oa = window.kxVistaAbrir, oc = window.kxVistaCerrar;
+  window.kxVistaAbrir = kxVistaAbrir = function(f){
+    const save = oa.apply(this, arguments);
+    (DB.inventario||[]).forEach(ins=>{
+      const s = save[ins.id]; if(!s) return;
+      s.mn = ins.min; s.mx = ins.max;
+      if(f && f!==KX_FAB_P){
+        if(ins.minDep && ins.minDep[f]!=null) ins.min = ins.minDep[f];
+        if(ins.maxDep && ins.maxDep[f]!=null) ins.max = ins.maxDep[f];
+      }
+    });
+    return save;
+  };
+  window.kxVistaCerrar = kxVistaCerrar = function(f, save){
+    (DB.inventario||[]).forEach(ins=>{ const s = save[ins.id]; if(s && 'mn' in s){ ins.min = s.mn; ins.max = s.mx; } });
+    return oc.apply(this, arguments);
+  };
+})();
+kxEnFab('kxRenderReponer', { mut:false });
+(function(){
+  const o = window.kxRenderReponer;
+  window.kxRenderReponer = kxRenderReponer = function(){
+    const r = o.apply(this, arguments);
+    try{ const d = document.getElementById('dash-reponer'); if(d && _kxFab) d.insertAdjacentHTML('afterbegin', `<div style="font-size:11px;font-weight:800;padding:6px 14px;color:${KX_FABRICAS[_kxFab].color}">🏭 Fábrica ${kxFabNombre(_kxFab)}</div>`); }catch(_){}
+    return r;
+  };
+  // Ficha del insumo: mínimo y máximo propios de cada fábrica no principal
+  const ofa = window.kxFichaAbrir;
+  window.kxFichaAbrir = kxFichaAbrir = function(id){
+    const r = ofa.apply(this, arguments);
+    try{
+      const st = 'width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box';
+      const maxEl = document.getElementById('kxi-max');
+      if(maxEl && !document.getElementById('kxi-dep-box')){
+        maxEl.closest('.form-group').insertAdjacentHTML('afterend', `<div class="form-group span2" id="kxi-dep-box"><div style="display:flex;gap:10px;flex-wrap:wrap">${
+          Object.values(KX_FABRICAS).filter(f=>f.id!==KX_FAB_P).map(f=>`<div style="flex:1;min-width:140px"><label style="font-size:11px;font-weight:700;color:${f.color}">Mínimo en ${f.nombre}</label><input type="number" min="0" step="0.001" id="kxi-min-${f.id}" placeholder="igual al general" style="${st}"></div>
+            <div style="flex:1;min-width:140px"><label style="font-size:11px;font-weight:700;color:${f.color}">Máximo en ${f.nombre}</label><input type="number" min="0" step="0.001" id="kxi-max-${f.id}" placeholder="igual al general" style="${st}"></div>`).join('')
+        }</div><span class="hint">El mínimo y máximo de arriba valen para ${kxFabNombre(KX_FAB_P)}. Si dejás estos vacíos, se usan los mismos.</span></div>`);
+      }
+      const ins = id ? getInsumo(id) : null;
+      Object.keys(KX_FABRICAS).filter(f=>f!==KX_FAB_P).forEach(f=>{
+        const a = document.getElementById('kxi-min-'+f), b = document.getElementById('kxi-max-'+f);
+        if(a) a.value = ins && ins.minDep && ins.minDep[f]!=null ? ins.minDep[f] : '';
+        if(b) b.value = ins && ins.maxDep && ins.maxDep[f]!=null ? ins.maxDep[f] : '';
+      });
+    }catch(e){ console.warn('v37.3 ficha:', e); }
+    return r;
+  };
+  const ofg = window.kxFichaGuardar;
+  window.kxFichaGuardar = kxFichaGuardar = function(){
+    const id = _kxFicha.id, n0 = DB.inventario.length;
+    const vals = {}; Object.keys(KX_FABRICAS).filter(f=>f!==KX_FAB_P).forEach(f=>{ vals[f] = { mn: kxVal('kxi-min-'+f), mx: kxVal('kxi-max-'+f) }; });
+    const r = ofg.apply(this, arguments);
+    try{
+      const ins = id ? getInsumo(id) : (DB.inventario.length > n0 ? DB.inventario[DB.inventario.length-1] : null);
+      if(ins){
+        const mn = Object.assign({}, ins.minDep), mx = Object.assign({}, ins.maxDep); let cambio = false;
+        Object.entries(vals).forEach(([f,v])=>{
+          const a = v.mn==='' ? null : +v.mn, b = v.mx==='' ? null : +v.mx;
+          if((mn[f]??null)!==a){ cambio = true; if(a==null) delete mn[f]; else mn[f] = a; }
+          if((mx[f]??null)!==b){ cambio = true; if(b==null) delete mx[f]; else mx[f] = b; }
+        });
+        if(cambio){ ins.minDep = mn; ins.maxDep = mx; ins._ts = Date.now(); guardarEnStorage(); try{ renderInventario(); }catch(_){} }
+      }
+    }catch(e){ console.warn('v37.3 ficha guardar:', e); }
+    return r;
+  };
+})();
+
+// ─── Movimiento de stock de un traslado (en la fábrica que corresponde) ───
+function kxTrAplicar(fab, items, signo, ctx){
+  const antes = kxSnapshotStock();
+  items.forEach(it=>{ const i = getInsumo(it.ins); if(i && it.q>0) i.stock = Math.max(0, +((Number(i.stock)||0) + signo*it.q).toFixed(4)); });
+  kxRegistrarDiferencias(antes, Object.assign({ fecha: kxHoy() }, ctx));
+}
+kxEnFab('kxTrAplicar', { mut:true, fab: f=>f });
+
+function kxTrNuevoId(){ return 'TR-' + Date.now().toString(36).toUpperCase().slice(-6); }
+function kxTrOtra(f){ return Object.keys(KX_FABRICAS).find(x=>x!==f); }
+function kxTrPendientes(){
+  const f = _kxFab; if(!f) return { enviar:0, recibir:0 };
+  const l = (DB.traslados||[]).filter(t=>!t.borrado);
+  return { enviar: l.filter(t=>t.estado==='Pedido' && t.origen===f).length, recibir: l.filter(t=>t.estado==='Enviado' && t.destino===f).length };
+}
+
+// Ventana principal de traslados
+function kxAbrirTraslados(vista){
+  if(!_kxFab){ toast('⚠️ Primero elegí la fábrica','error'); return; }
+  let m = document.getElementById('kx-modal-tr');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-tr';
+    m.innerHTML = `<div class="modal" style="max-width:1050px;width:96vw"><div class="modal-header"><span>🚚</span><h2>Traslados entre fábricas</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-tr')">✕</button></div><div class="modal-body" id="kxtr-body"></div></div>`;
+    document.body.appendChild(m);
+  }
+  kxTrLista(vista || 'pend'); abrirModal('kx-modal-tr');
+}
+function kxTrLista(vista){
+  const f = _kxFab, otra = kxTrOtra(f), F = KX_FABRICAS;
+  const todos = (DB.traslados||[]).filter(t=>!t.borrado).sort((a,b)=>(b._ts||0)-(a._ts||0));
+  const pend = todos.filter(t=>(t.estado==='Pedido' && (t.origen===f || t.destino===f)) || (t.estado==='Enviado' && (t.destino===f || t.origen===f)));
+  const lista = vista==='hist' ? todos : pend;
+  const est = t=>({Pedido:'📝 Pedido', Enviado:'🚚 En camino', Recibido:'✅ Recibido', Anulado:'✕ Anulado'}[t.estado]||t.estado);
+  const acc = t=>{
+    const b = [];
+    if(t.estado==='Pedido' && t.origen===f) b.push(`<button class="btn-primary" style="padding:4px 10px" onclick="kxTrEnviarForm('${t.id}')">🚚 Preparar envío</button>`);
+    if(t.estado==='Enviado' && t.destino===f) b.push(`<button class="btn-primary" style="padding:4px 10px" onclick="kxTrRecibirForm('${t.id}')">📥 Recibir</button>`);
+    if(t.estado==='Pedido') b.push(`<button class="btn-secondary" style="padding:4px 10px" onclick="kxTrAnular('${t.id}')">✕ Anular</button>`);
+    b.push(`<button class="btn-secondary" style="padding:4px 10px" onclick="kxTrImprimir('${t.id}')">🖨️</button>`);
+    return b.join(' ');
+  };
+  document.getElementById('kxtr-body').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn-primary" onclick="kxTrForm('pedir')">📝 Pedir mercadería a ${F[otra].nombre}</button>
+      <button class="btn-secondary" onclick="kxTrForm('enviar')">🚚 Enviar a ${F[otra].nombre} sin pedido</button>
+      <span style="flex:1"></span>
+      <button class="btn-${vista==='hist'?'secondary':'primary'}" onclick="kxTrLista('pend')">Pendientes (${pend.length})</button>
+      <button class="btn-${vista==='hist'?'primary':'secondary'}" onclick="kxTrLista('hist')">Historial</button></div>
+    ${!lista.length ? '<div class="empty-state"><div class="es-icon">🚚</div><h4>Sin traslados '+(vista==='hist'?'':'pendientes')+'</h4></div>' :
+    `<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>N°</th><th>De → A</th><th>Estado</th><th>Insumos</th><th>Pidió / Envió / Recibió</th><th></th></tr></thead><tbody>${
+      lista.map(t=>`<tr><td class="mono">${kxEsc(t.id)}</td>
+        <td style="white-space:nowrap"><span style="color:${F[t.origen].color};font-weight:800">${F[t.origen].nombre}</span> → <span style="color:${F[t.destino].color};font-weight:800">${F[t.destino].nombre}</span></td>
+        <td>${est(t)}</td>
+        <td>${t.items.map(i=>`${kxEsc(i.desc)}: ${fmtN(i.recibida ?? i.enviada ?? i.pedida)} ${kxEsc(i.uom||'')}`).join('<br>')}</td>
+        <td style="font-size:11px">${[t.pidio&&('📝 '+t.pidio+' '+(t.fPedido||'')), t.envio&&('🚚 '+t.envio+' '+(t.fEnvio||'')), t.recibio&&('📥 '+t.recibio+' '+(t.fRecep||''))].filter(Boolean).map(kxEsc).join('<br>')}</td>
+        <td style="white-space:nowrap">${acc(t)}</td></tr>`).join('')}</tbody></table></div>`}`;
+}
+// Formulario de ítems (pedir, enviar sin pedido)
+let _kxTrF = null;
+function kxTrForm(modo, tr){
+  const f = _kxFab, otra = kxTrOtra(f);
+  const origen = modo==='pedir' ? otra : f, destino = modo==='pedir' ? f : otra;
+  _kxTrF = { modo, origen, destino, tr: tr||null };
+  const st = 'width:100%;padding:6px 8px;border:1.5px solid var(--borde);border-radius:6px;font-size:12px;box-sizing:border-box';
+  const titulo = modo==='pedir' ? `📝 Pedir a Fábrica ${kxFabNombre(origen)}` : modo==='enviar' ? `🚚 Enviar a Fábrica ${kxFabNombre(destino)}` : modo==='envio' ? `🚚 Preparar envío a ${kxFabNombre(destino)}` : `📥 Recibir de ${kxFabNombre(origen)}`;
+  const items = tr ? tr.items : [{},{},{}];
+  document.getElementById('kxtr-body').innerHTML = `<h3 style="margin:0 0 8px">${titulo}${tr?' · '+kxEsc(tr.id):''}</h3>
+    <datalist id="kxtr-dl">${(DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo').map(i=>`<option value="${kxEsc(i.desc)} (${kxEsc(i.id)})">`).join('')}</datalist>
+    <div class="table-wrap"><table style="font-size:12px"><thead><tr><th style="min-width:230px">Insumo</th>${modo==='recibir'?'<th>Enviado</th>':''}${modo==='envio'?'<th>Pedido</th>':''}
+      <th>${modo==='recibir'?'Recibido':modo==='pedir'?'Cantidad pedida':'Cantidad que sale'}</th><th>En presentación</th><th>Stock en ${kxFabNombre(origen)}</th><th>Stock en ${kxFabNombre(destino)}</th><th></th></tr></thead><tbody id="kxtr-items">${
+      items.map((it,k)=>kxTrFila(it, k)).join('')}</tbody></table></div>
+    ${tr?'':'<button class="btn-secondary" style="margin-top:6px" onclick="document.getElementById(\'kxtr-items\').insertAdjacentHTML(\'beforeend\', kxTrFila({}, Date.now()))">➕ Agregar insumo</button>'}
+    <div class="form-group" style="margin-top:10px"><label>Observaciones</label><input id="kxtr-obs" style="${st}" value="${kxEsc(tr && tr.obs || '')}" placeholder="${modo==='recibir'?'Si llegó algo roto o faltó, contalo acá':'Opcional'}"></div>
+    <div id="kxtr-aviso" style="font-size:12px;margin-top:6px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn-secondary" onclick="kxTrLista('pend')">Volver</button>
+      <button class="btn-primary" onclick="kxTrConfirmar()">${modo==='pedir'?'✅ Enviar pedido':modo==='recibir'?'✅ Confirmar recepción':'✅ Confirmar envío'}</button></div>`;
+  kxTrRefrescarFilas();
+}
+function kxTrFila(it, k){
+  const st = 'width:100%;padding:6px 8px;border:1.5px solid var(--borde);border-radius:6px;font-size:12px;box-sizing:border-box';
+  const m = _kxTrF.modo, fijo = !!_kxTrF.tr;
+  const val = m==='recibir' ? (it.enviada ?? '') : m==='envio' ? (it.pedida ?? '') : (it.pedida ?? '');
+  const ins = it.ins ? getInsumo(it.ins) : null;
+  return `<tr data-k="${k}">
+    <td><input class="kxtr-ins" list="kxtr-dl" style="${st}" ${fijo?'readonly':''} value="${ins?kxEsc(ins.desc+' ('+ins.id+')'):''}" oninput="kxTrRefrescarFilas()"></td>
+    ${m==='recibir'?`<td>${fmtN(it.enviada)} ${kxEsc(it.uom||'')}</td>`:''}${m==='envio'?`<td>${fmtN(it.pedida)} ${kxEsc(it.uom||'')}</td>`:''}
+    <td><input class="kxtr-q" type="number" min="0" step="0.001" style="${st};font-weight:700" value="${val}" oninput="kxTrRefrescarFilas()"></td>
+    <td class="kxtr-pres" style="font-size:11px;color:var(--texto-2)"></td><td class="kxtr-so"></td><td class="kxtr-sd"></td>
+    <td>${fijo?'':'<button class="btn-secondary" style="padding:2px 8px" onclick="this.closest(\'tr\').remove();kxTrRefrescarFilas()">✕</button>'}</td></tr>`;
+}
+function kxTrLeer(){
+  return [...document.querySelectorAll('#kxtr-items tr')].map(tr=>{
+    const ins = kxInsumoDeTexto(tr.querySelector('.kxtr-ins').value);
+    return { tr, ins, q: parseFloat(tr.querySelector('.kxtr-q').value)||0, txt: tr.querySelector('.kxtr-ins').value.trim() };
+  }).filter(x=>x.txt || x.q);
+}
+function kxTrRefrescarFilas(){
+  const F = _kxTrF; if(!F) return; let aviso = [];
+  kxTrLeer().forEach(x=>{
+    const i = x.ins;
+    x.tr.querySelector('.kxtr-pres').textContent = i && kxPres(i) && x.q ? kxPresTxt(i, x.q) : '';
+    const so = i ? kxStockFab(i, F.origen) : null, sd = i ? kxStockFab(i, F.destino) : null;
+    x.tr.querySelector('.kxtr-so').innerHTML = i ? `${fmtN(so)} ${kxEsc(i.uom||'')}` : '—';
+    x.tr.querySelector('.kxtr-sd').innerHTML = i ? `${fmtN(sd)} ${kxEsc(i.uom||'')}` : '—';
+    const falta = i && (F.modo==='enviar' || F.modo==='envio') && x.q > so + 1e-9;
+    x.tr.style.background = falta ? '#fdecea' : '';
+    if(falta) aviso.push(`🔴 ${i.desc}: en ${kxFabNombre(F.origen)} hay ${fmtN(so)} ${i.uom||''}`);
+    if(x.txt && !i) aviso.push('⚠️ Elegí los insumos de la lista');
+  });
+  document.getElementById('kxtr-aviso').innerHTML = [...new Set(aviso)].map(a=>`<div style="color:#c0392b;font-weight:700">${kxEsc(a)}</div>`).join('');
+}
+function kxTrEnviarForm(id){ const t = DB.traslados.find(x=>x.id===id); if(!t) return;
+  if(_kxFab!==t.origen){ toast(`⚠️ Para preparar el envío tenés que estar en Fábrica ${kxFabNombre(t.origen)}`,'error'); return; }
+  kxTrForm('envio', t); }
+function kxTrRecibirForm(id){ const t = DB.traslados.find(x=>x.id===id); if(!t) return;
+  if(_kxFab!==t.destino){ toast(`⚠️ Para recibir tenés que estar en Fábrica ${kxFabNombre(t.destino)}`,'error'); return; }
+  kxTrForm('recibir', t); }
+function kxTrQuien(){ return usuarioActual ? usuarioActual.nombre : '—'; }
+function kxTrConfirmar(){
+  const F = _kxTrF; if(!F) return;
+  const filas = kxTrLeer(); const obs = kxVal('kxtr-obs').trim();
+  if(filas.some(x=>!x.ins)){ toast('⚠️ Elegí los insumos de la lista','error'); return; }
+  const ahora = Date.now(), hoy = kxHoy(), hora = new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+  if(F.modo==='pedir' || F.modo==='enviar'){
+    const it = filas.filter(x=>x.q>0);
+    if(!it.length){ toast('⚠️ Cargá al menos un insumo con cantidad','error'); return; }
+    if(F.modo==='enviar'){
+      const falta = it.find(x=>x.q > kxStockFab(x.ins, F.origen) + 1e-9);
+      if(falta){ toast(`⚠️ No alcanza ${falta.ins.desc} en ${kxFabNombre(F.origen)}`,'error'); return; }
+      if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
+      if(!confirm(`Se va a descontar de Fábrica ${kxFabNombre(F.origen)}:\n\n${it.map(x=>`• ${x.ins.desc}: ${fmtN(x.q)} ${x.ins.uom||''}`).join('\n')}\n\nQueda "en camino" hasta que ${kxFabNombre(F.destino)} lo reciba. ¿Confirmar?`)) return;
+    }
+    const t = { id:kxTrNuevoId(), origen:F.origen, destino:F.destino, obs, _ts:ahora,
+      items: it.map(x=>({ ins:x.ins.id, desc:x.ins.desc, uom:x.ins.uom, pedida: F.modo==='pedir' ? x.q : null, enviada: F.modo==='enviar' ? x.q : null })),
+      estado: F.modo==='pedir' ? 'Pedido' : 'Enviado' };
+    if(F.modo==='pedir'){ t.pidio = kxTrQuien(); t.fPedido = `${hoy.split('-').reverse().join('/')} ${hora}`; }
+    else { t.envio = kxTrQuien(); t.fEnvio = `${hoy.split('-').reverse().join('/')} ${hora}`;
+      kxTrAplicar(F.origen, t.items.map(i=>({ ins:i.ins, q:i.enviada })), -1, { tipo:'traslado', org:'traslado', ref:t.id, nota:`Envío a ${kxFabNombre(F.destino)}` }); }
+    DB.traslados.push(t);
+    registrarAuditoria('Creación', `Traslado ${t.id}`, `${F.modo==='pedir'?'Pedido':'Envío sin pedido'} ${kxFabNombre(t.origen)} → ${kxFabNombre(t.destino)} · ${t.items.map(i=>`${i.desc} ${fmtN(i.pedida??i.enviada)} ${i.uom||''}`).join(' · ')}`);
+    toast(F.modo==='pedir' ? `📝 Pedido ${t.id} enviado a ${kxFabNombre(t.origen)}` : `🚚 ${t.id} en camino a ${kxFabNombre(t.destino)}`,'success');
+    guardarEnStorage(); kxTrBadge(); kxTrLista('pend');
+    if(F.modo==='enviar' && confirm('¿Imprimir el remito para que viaje con la mercadería?')) kxTrImprimir(t.id);
+    return;
+  }
+  const t = F.tr; if(!t) return;
+  if(F.modo==='envio'){
+    const q = filas.map(x=>x.q);
+    if(!q.some(v=>v>0)){ toast('⚠️ No sale ninguna cantidad','error'); return; }
+    const falta = filas.find(x=>x.q > kxStockFab(x.ins, t.origen) + 1e-9);
+    if(falta){ toast(`⚠️ No alcanza ${falta.ins.desc} en ${kxFabNombre(t.origen)}`,'error'); return; }
+    if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
+    if(!confirm(`Se descuenta de Fábrica ${kxFabNombre(t.origen)} lo que sale ahora. ¿Confirmar el envío de ${t.id}?`)) return;
+    t.items.forEach((i,k)=>{ i.enviada = q[k]||0; });
+    kxTrAplicar(t.origen, t.items.map(i=>({ ins:i.ins, q:i.enviada })), -1, { tipo:'traslado', org:'traslado', ref:t.id, nota:`Envío a ${kxFabNombre(t.destino)}` });
+    t.estado = 'Enviado'; t.envio = kxTrQuien(); t.fEnvio = `${hoy.split('-').reverse().join('/')} ${hora}`; if(obs) t.obs = obs; t._ts = Date.now();
+    registrarAuditoria('Modificación', `Traslado ${t.id}`, `Enviado ${kxFabNombre(t.origen)} → ${kxFabNombre(t.destino)} · ${t.items.map(i=>`${i.desc} ${fmtN(i.enviada)} (pedido ${fmtN(i.pedida)})`).join(' · ')}`);
+    toast(`🚚 ${t.id} en camino a ${kxFabNombre(t.destino)}`,'success');
+    guardarEnStorage(); kxTrBadge(); kxTrLista('pend');
+    if(confirm('¿Imprimir el remito para que viaje con la mercadería?')) kxTrImprimir(t.id);
+    return;
+  }
+  if(F.modo==='recibir'){
+    const q = filas.map(x=>x.q);
+    const dif = t.items.map((i,k)=>+((Number(i.enviada)||0) - (q[k]||0)).toFixed(4));
+    if(dif.some(d=>d<0)){ toast('⚠️ No se puede recibir más de lo que se envió. Si llegó de más, cargalo aparte.','error'); return; }
+    if(dif.some(d=>d>0) && !obs){ toast('⚠️ Llegó menos de lo enviado: contá qué pasó en Observaciones','error'); return; }
+    if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
+    if(!confirm(`Se suma a Fábrica ${kxFabNombre(t.destino)} lo recibido.${dif.some(d=>d>0)?'\n\nLo que faltó queda registrado como merma por diferencia en traslado.':''}\n\n¿Confirmar la recepción de ${t.id}?`)) return;
+    kxTrAplicar(t.destino, t.items.map(i=>({ ins:i.ins, q:i.enviada })), +1, { tipo:'traslado', org:'traslado', ref:t.id, nota:`Recepción desde ${kxFabNombre(t.origen)}` });
+    const falt = t.items.map((i,k)=>({ ins:i.ins, q:dif[k] })).filter(x=>x.q>0);
+    if(falt.length) kxTrAplicar(t.destino, falt, -1, { tipo:'merma', mot:'traslado', org:'traslado', ref:t.id, nota:`Diferencia en traslado: ${obs}` });
+    t.items.forEach((i,k)=>{ i.recibida = q[k]||0; });
+    t.estado = 'Recibido'; t.recibio = kxTrQuien(); t.fRecep = `${hoy.split('-').reverse().join('/')} ${hora}`; if(obs) t.obs = obs; t._ts = Date.now();
+    registrarAuditoria('Modificación', `Traslado ${t.id}`, `Recibido en ${kxFabNombre(t.destino)} · ${t.items.map((i,k)=>`${i.desc} ${fmtN(i.recibida)} de ${fmtN(i.enviada)}`).join(' · ')}${falt.length?' · con diferencia: '+obs:''}`);
+    toast(`📥 ${t.id} recibido en ${kxFabNombre(t.destino)}`,'success');
+    guardarEnStorage(); kxTrBadge(); kxTrLista('pend');
+  }
+}
+function kxTrAnular(id){
+  const t = DB.traslados.find(x=>x.id===id); if(!t || t.estado!=='Pedido') return;
+  const mot = prompt(`¿Por qué se anula el pedido ${t.id}?`); if(mot===null) return;
+  if(!mot.trim()){ toast('⚠️ Escribí el motivo','error'); return; }
+  t.estado = 'Anulado'; t.obs = (t.obs?t.obs+' · ':'') + 'Anulado: ' + mot.trim(); t._ts = Date.now();
+  registrarAuditoria('Modificación', `Traslado ${t.id}`, `Pedido anulado por ${kxTrQuien()}: ${mot.trim()}`);
+  guardarEnStorage(); kxTrBadge(); kxTrLista('pend');
+}
+function kxTrImprimir(id){
+  const t = DB.traslados.find(x=>x.id===id); if(!t) return;
+  const e = kxEsc, F = KX_FABRICAS;
+  const h = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Remito ${e(t.id)}</title><style>
+    @page{size:A4;margin:14mm} body{font-family:Arial,sans-serif;color:#2A1C13;font-size:13px}
+    h1{font-size:20px;margin:0} .sub{color:#6B5A4B;font-size:12px} table{width:100%;border-collapse:collapse;margin-top:10px}
+    th{text-align:left;font-size:11px;color:#6B5A4B;border-bottom:1.5px solid #2A1C13;padding:6px} td{border-bottom:1px solid #D9C9B0;padding:9px 6px}
+    .r{text-align:right} .firmas{display:flex;gap:30px;margin-top:40px}.firmas div{flex:1;border-top:1px solid #2A1C13;text-align:center;padding-top:4px;font-size:11px}
+    .ruta{margin:12px 0;font-size:16px;font-weight:bold} @media print{.aviso{display:none}}</style></head>
+    <body onload="setTimeout(()=>window.print(),300)"><div class="aviso" style="background:#F6EFE3;padding:6px">Si no se abre la impresión, usá Ctrl+P.</div>
+    <h1>🚚 Remito de traslado ${e(t.id)}</h1><div class="sub">Panadería Belén · Estado: ${e(t.estado)} · Impreso ${new Date().toLocaleString('es-AR')}</div>
+    <div class="ruta"><span style="color:${F[t.origen].color}">Fábrica ${F[t.origen].nombre}</span> → <span style="color:${F[t.destino].color}">Fábrica ${F[t.destino].nombre}</span></div>
+    <table><thead><tr><th>Insumo</th><th class="r">Pedido</th><th class="r">Enviado</th><th>En presentación</th><th class="r">Recibido</th><th>Control ✓</th></tr></thead><tbody>
+    ${t.items.map(i=>{ const ins = getInsumo(i.ins); const q = i.enviada ?? i.pedida;
+      return `<tr><td><strong>${e(i.desc)}</strong></td><td class="r">${i.pedida!=null?fmtN(i.pedida)+' '+e(i.uom||''):'—'}</td><td class="r">${i.enviada!=null?fmtN(i.enviada)+' '+e(i.uom||''):'________'}</td>
+        <td>${ins&&kxPres(ins)&&q?kxPresTxt(ins,q):'—'}</td><td class="r">${i.recibida!=null?fmtN(i.recibida)+' '+e(i.uom||''):'________'}</td><td></td></tr>`; }).join('')}</tbody></table>
+    <p style="margin-top:12px"><strong>Observaciones:</strong> ${e(t.obs||'')}</p>
+    <div class="sub">${[t.pidio&&'Pidió: '+t.pidio+' ('+t.fPedido+')', t.envio&&'Envió: '+t.envio+' ('+t.fEnvio+')', t.recibio&&'Recibió: '+t.recibio+' ('+t.fRecep+')'].filter(Boolean).map(e).join(' · ')}</div>
+    <div class="firmas"><div>Entrega (${F[t.origen].nombre})</div><div>Transporta</div><div>Recibe (${F[t.destino].nombre})</div></div></body></html>`;
+  const v = window.open('', '_blank'); if(!v){ toast('⚠️ El navegador bloqueó la ventana de impresión','error'); return; }
+  v.document.open(); v.document.write(h); v.document.close();
+}
+// Aviso en la franja de la fábrica: lo que hay para enviar o recibir
+function kxTrBadge(){
+  const b = document.getElementById('kx-fab-banda'); if(!b || !_kxFab) return;
+  let s = document.getElementById('kx-tr-badge');
+  if(!s){ s = document.createElement('button'); s.id = 'kx-tr-badge'; s.type = 'button'; s.onclick = ()=>kxAbrirTraslados('pend');
+    s.style.cssText = 'background:#fff;color:#2A1C13;border:none;border-radius:12px;padding:2px 10px;font:800 11px Inter,Arial,sans-serif;cursor:pointer'; b.appendChild(s); }
+  const p = kxTrPendientes();
+  const txt = [p.enviar ? `📝 ${p.enviar} pedido(s) para enviar` : '', p.recibir ? `📥 ${p.recibir} para recibir` : ''].filter(Boolean).join(' · ');
+  s.textContent = txt ? '🚚 ' + txt : '🚚 Traslados';
+  s.style.background = txt ? '#FFEB3B' : 'rgba(255,255,255,.85)';
+}
+(function(){
+  const oa = window.kxFabAplicar;
+  window.kxFabAplicar = kxFabAplicar = function(){ const r = oa.apply(this, arguments); try{ kxTrBadge(); }catch(_){} return r; };
+  setInterval(()=>{ try{ kxTrBadge(); }catch(_){} }, 15000);
+  KX_QP_OPC.splice(2, 0, { k:'traslado', ic:'🚚', t:'Traslado entre fábricas', d:'Pedir a la otra fábrica, preparar un envío o recibir mercadería.' });
+  const oq = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){ if(k==='traslado'){ cerrarModal('kx-modal-qp'); kxAbrirTraslados('pend'); return; } return oq.apply(this, arguments); };
 })();
 
 </script>
