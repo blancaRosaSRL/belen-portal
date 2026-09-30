@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.7';
+const BELEN_BUILD = '37.8';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21507,7 +21507,7 @@ function kxEscHarinaAKg(rec){
 </script>
 <script>
 // ═══════════════════════════════════════════════════════════════
-// v37.0 — STOCK POR FÁBRICA (Sarmiento / Bayofet) — Etapa 1
+// v37.0 — STOCK POR FÁBRICA (Sarmiento / Ballofett) — Etapa 1
 //
 // Modelo de datos (diseñado para no romper nada de lo existente):
 //   · ins.stock sigue siendo el TOTAL de la empresa (todo el sistema lo usa).
@@ -21521,7 +21521,7 @@ function kxEscHarinaAKg(rec){
 // ═══════════════════════════════════════════════════════════════
 const KX_FABRICAS = {
   SAR: { id:'SAR', nombre:'Sarmiento', color:'#2E7D32', claro:'#E8F5E9' },
-  BAY: { id:'BAY', nombre:'Bayofet',   color:'#E65100', claro:'#FFF3E0' }
+  BAY: { id:'BAY', nombre:'Ballofett', color:'#E65100', claro:'#FFF3E0', alias:['bayofet','bayofett','ballofet','ballofett','balofet','balofett'] }
 };
 const KX_FAB_P = 'SAR';
 let _kxFab = null;              // fábrica elegida en esta sesión
@@ -21750,7 +21750,7 @@ function kxFabAplicar(){
 // ═══════════════════════════════════════════════════════════════
 // v37.1 — Ver lo que carga cada fábrica
 //   · Marca 🏭 SAR / 🏭 BAY en Materia Prima y Kardex
-//   · Filtro "Fábrica: Todas / Sarmiento / Bayofet" en las dos pantallas
+//   · Filtro "Fábrica: Todas / Sarmiento / Ballofett" en las dos pantallas
 //   · Panel "Actividad por fábrica" del día, lado a lado
 // ═══════════════════════════════════════════════════════════════
 let _kxFiltFab = { mp:'', kx:'' };
@@ -22502,7 +22502,7 @@ function kxInfFabImprimir(){
     if(pr && !document.getElementById('kx-rem-aviso')){
       const hero = pr.querySelector('.page-hero');
       if(hero) hero.insertAdjacentHTML('afterend', `<div id="kx-rem-aviso" style="margin:0 0 12px;padding:10px 14px;border-radius:10px;background:#E3F2FD;border:1px solid #90CAF9;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span>ℹ️ <strong>Los remitos internos son solo un comprobante y no mueven stock.</strong> Usalos para sucursales y puntos de venta. Para mandar mercadería entre Sarmiento y Bayofet usá <strong>Traslados</strong>: descuenta en una fábrica y suma en la otra.</span>
+        <span>ℹ️ <strong>Los remitos internos son solo un comprobante y no mueven stock.</strong> Usalos para sucursales y puntos de venta. Para mandar mercadería entre Sarmiento y Ballofett usá <strong>Traslados</strong>: descuenta en una fábrica y suma en la otra.</span>
         <button class="btn-primary" onclick="kxAbrirTraslados('pend')">🚚 Ir a Traslados</button></div>`);
     }
   };
@@ -22514,8 +22514,8 @@ function kxInfFabImprimir(){
   if(typeof og==='function') window.guardarRemito = guardarRemito = function(){
     try{
       const o = kxVal('rem-origen').toLowerCase(), d = kxVal('rem-destino').toLowerCase();
-      const esFab = t => Object.values(KX_FABRICAS).some(F=>t.includes(F.nombre.toLowerCase().slice(0,5)));
-      if(esFab(o) && esFab(d) && !confirm('Este remito parece ser entre fábricas (Sarmiento ↔ Bayofet).\n\nUn remito interno NO mueve stock. Para que se descuente en una y se sume en la otra, usá 🚚 Traslados.\n\n¿Guardar igual como comprobante?')) return;
+      const esFab = t => Object.values(KX_FABRICAS).some(F=>kxEsNombreFab(t, F));
+      if(esFab(o) && esFab(d) && !confirm('Este remito parece ser entre fábricas (Sarmiento ↔ Ballofett).\n\nUn remito interno NO mueve stock. Para que se descuente en una y se sume en la otra, usá 🚚 Traslados.\n\n¿Guardar igual como comprobante?')) return;
     }catch(_){}
     return og.apply(this, arguments);
   };
@@ -22754,7 +22754,8 @@ function kxImpNum2(v){
   if(s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',','.'); else s = s.replace(',','.');
   const n = Number(s); return isFinite(n) ? n : NaN;
 }
-function kxImpFab(v){ const s = String(v||'').toLowerCase(); return Object.values(KX_FABRICAS).find(f=>s.includes(f.nombre.toLowerCase().slice(0,4)) || s===f.id.toLowerCase())?.id || null; }
+function kxEsNombreFab(t, f){ const s = String(t||'').toLowerCase(); return s.includes(f.nombre.toLowerCase().slice(0,4)) || (f.alias||[]).some(a=>s.includes(a)); }
+function kxImpFab(v){ const s = String(v||'').toLowerCase().trim(); return Object.values(KX_FABRICAS).find(f=>s===f.id.toLowerCase() || kxEsNombreFab(s, f))?.id || null; }
 function kxImpBuscarIns(r){
   const cod = String(r.codigo||r.cod||r.id||'').trim();
   if(cod){ const i = getInsumo(cod) || getInsumo(cod.toUpperCase()); if(i) return { ins:i, como:'código' }; }
