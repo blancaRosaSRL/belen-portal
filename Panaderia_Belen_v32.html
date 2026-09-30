@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.8';
+const BELEN_BUILD = '37.9';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22968,6 +22968,37 @@ function kxArranqueDe(f){ return (DB.arranquesStock||[]).find(a=>a && a.fab===f 
         guardarEnStorage();
       }
     }catch(e){ console.warn('v37.7 marca:', e); }
+    return r;
+  };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.9 — SUBIDA AUTOMÁTICA DE TODOS LOS CAMBIOS
+//   Antes solo los movimientos de stock marcaban "pendiente de subir";
+//   nombres, traslados, órdenes planificadas, recetas, fichas, etc. quedaban
+//   en la PC hasta tocar ☁️↑. Ahora, todo guardado que viene de una acción
+//   de la persona (clic, tecla, cambio) marca la PC como pendiente, y el
+//   ciclo automático la sube. Lo que baja de la nube no se vuelve a subir.
+// ═══════════════════════════════════════════════════════════════
+let _kxUltAccion = 0;
+['click','keydown','change','input','submit'].forEach(ev=>window.addEventListener(ev, e=>{ if(e.isTrusted) _kxUltAccion = Date.now(); }, true));
+function kxMarcarPendiente(){
+  try{
+    if(typeof _syncQueue==='undefined' || !usuarioActual) return;
+    if(_syncQueue.some(c=>c.col==='auto' && c.id==='AUTO')) return;
+    encolarCambio('auto','upsert',{ id:'AUTO' });
+  }catch(_){}
+}
+(function(){
+  const g = window.guardarEnStorage;
+  window.guardarEnStorage = guardarEnStorage = function(){
+    const r = g.apply(this, arguments);
+    try{
+      const vista = typeof _kxVista!=='undefined' && _kxVista>0;
+      if(!vista && Date.now() - _kxUltAccion < 4000) kxMarcarPendiente();
+    }catch(_){}
     return r;
   };
 })();
