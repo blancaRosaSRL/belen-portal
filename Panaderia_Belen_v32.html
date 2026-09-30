@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.3';
+const BELEN_BUILD = '37.4';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22359,6 +22359,178 @@ function kxTrBadge(){
   KX_QP_OPC.splice(2, 0, { k:'traslado', ic:'🚚', t:'Traslado entre fábricas', d:'Pedir a la otra fábrica, preparar un envío o recibir mercadería.' });
   const oq = window.kxQpElegir;
   window.kxQpElegir = kxQpElegir = function(k){ if(k==='traslado'){ cerrarModal('kx-modal-qp'); kxAbrirTraslados('pend'); return; } return oq.apply(this, arguments); };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.4 — INFORME MENSUAL POR FÁBRICA + CONTROLES DE CONSISTENCIA
+//   Solo lectura: no modifica ningún dato.
+//   Stock inicial y final de cada fábrica se calculan hacia atrás desde el
+//   stock actual de esa fábrica restando sus movimientos del Kardex
+//   (no depende de cierres anteriores, así sirve desde el primer mes).
+// ═══════════════════════════════════════════════════════════════
+function kxMovFab(m){ return (m && m.dep) || KX_FAB_P; }
+function kxInformeFab(periodo, fab){
+  const desde = periodo + '-01', hastaMes = periodo + '-31';
+  const porIns = {};
+  (DB.movimientosMP||[]).forEach(m=>{ if(m && m.ins && kxMovFab(m)===fab) (porIns[m.ins] = porIns[m.ins] || []).push(m); });
+  const filas = [];
+  (DB.inventario||[]).forEach(ins=>{
+    const movs = porIns[ins.id] || [];
+    const actual = kxStockFab(ins, fab);
+    const posteriores = movs.filter(m=>(m.f||'') > hastaMes).reduce((s,m)=>s+(Number(m.d)||0), 0);
+    const delMes = movs.filter(m=>(m.f||'') >= desde && (m.f||'') <= hastaMes);
+    const sf = +(actual - posteriores).toFixed(4);
+    const r = { ins, si:0, compras:0, sinFac:0, trIn:0, trOut:0, consumo:0, merma:0, ajuste:0, inicial:0, sf, motivos:{} };
+    delMes.forEach(m=>{
+      const d = Number(m.d)||0;
+      if(m.tipo==='traslado'){ if(d>0) r.trIn += d; else r.trOut -= d; }
+      else if(m.tipo==='merma'){ r.merma -= d; const k = m.mot||'otro'; r.motivos[k] = (r.motivos[k]||0) - d; }
+      else if(m.tipo==='ingreso'){ if(m.org==='compra') r.compras += d; else r.sinFac += d; }
+      else if(m.tipo==='egreso'){ r.consumo -= d; }
+      else if(m.org==='inicial'){ r.inicial += d; }
+      else r.ajuste += d;
+    });
+    const sumaMes = delMes.reduce((s,m)=>s+(Number(m.d)||0), 0);
+    r.si = +(sf - sumaMes).toFixed(4);
+    const hay = r.si || r.sf || delMes.length;
+    if(hay) filas.push(r);
+  });
+  return filas.sort((a,b)=>String(a.ins.desc).localeCompare(String(b.ins.desc)));
+}
+function kxAbrirInformeFab(){
+  let m = document.getElementById('kx-modal-inffab');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-inffab';
+    const st = 'padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px';
+    m.innerHTML = `<div class="modal" style="max-width:1250px;width:97vw"><div class="modal-header"><span>📊</span><h2>Informe mensual de materia prima por fábrica</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-inffab')">✕</button></div>
+      <div class="modal-body">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+          <div><label style="display:block;font-size:11px;font-weight:700">Mes</label><input type="month" id="kxif-mes" style="${st}"></div>
+          <div><label style="display:block;font-size:11px;font-weight:700">Ver</label><select id="kxif-fab" style="${st};font-weight:700">
+            ${Object.values(KX_FABRICAS).map(f=>`<option value="${f.id}">🏭 Fábrica ${f.nombre}</option>`).join('')}<option value="CMP">⚖️ Comparar fábricas</option></select></div>
+          <div><label style="display:block;font-size:11px;font-weight:700">Mostrar</label><select id="kxif-ver" style="${st}"><option value="mov">Solo insumos con movimiento</option><option value="todo">Todos</option></select></div>
+          <button class="btn-secondary" onclick="kxInfFabCSV()">📊 Exportar CSV</button>
+          <button class="btn-secondary" onclick="kxInfFabImprimir()">🖨️ Imprimir</button>
+        </div>
+        <div id="kxif-res"></div>
+        <div id="kxif-ctrl" style="margin-top:14px"></div>
+      </div></div>`;
+    document.body.appendChild(m);
+    ['kxif-mes','kxif-fab','kxif-ver'].forEach(id=>document.getElementById(id).addEventListener('change', kxInfFabRender));
+  }
+  document.getElementById('kxif-mes').value = kxHoy().slice(0,7);
+  document.getElementById('kxif-fab').value = _kxFab || KX_FAB_P;
+  kxInfFabRender(); abrirModal('kx-modal-inffab');
+}
+function kxInfFabDatos(){
+  const p = kxVal('kxif-mes') || kxHoy().slice(0,7), f = kxVal('kxif-fab');
+  const soloMov = kxVal('kxif-ver')!=='todo';
+  const filtrar = l => soloMov ? l.filter(r=>r.compras||r.sinFac||r.trIn||r.trOut||r.consumo||r.merma||r.ajuste||r.inicial) : l;
+  return { p, f, soloMov, filtrar };
+}
+function kxInfFabRender(){
+  const { p, f, filtrar } = kxInfFabDatos();
+  const $ = (q, ins)=> fmt$(q * (Number(ins.precio)||0));
+  const n = v => v ? fmtN(+v.toFixed(3)) : '—';
+  let html = '';
+  if(f==='CMP'){
+    const tabla = Object.values(KX_FABRICAS).map(F=>{
+      const l = kxInformeFab(p, F.id); const v = k => l.reduce((s,r)=>s + r[k]*(Number(r.ins.precio)||0), 0);
+      return { F, compras:v('compras'), sinFac:v('sinFac'), trIn:v('trIn'), trOut:v('trOut'), consumo:v('consumo'), merma:v('merma'), ajuste:v('ajuste'), sf:v('sf'), n:filtrar(l).length };
+    });
+    const fila = (lab, k, neg)=>`<tr><td>${lab}</td>${tabla.map(t=>`<td style="text-align:right;${neg&&t[k]?'color:#c0392b;':''}font-weight:700">${fmt$(t[k])}</td>`).join('')}<td style="text-align:right">${fmt$(tabla.reduce((s,t)=>s+t[k],0))}</td></tr>`;
+    html = `<div class="table-wrap"><table style="font-size:13px"><thead><tr><th>Concepto (valorizado a precio actual)</th>${tabla.map(t=>`<th style="text-align:right;color:${t.F.color}">🏭 ${t.F.nombre}</th>`).join('')}<th style="text-align:right">Empresa</th></tr></thead><tbody>
+      ${fila('🚚 Compras','compras')}${fila('📥 Ingresos sin factura','sinFac')}${fila('🔁 Traslados recibidos','trIn')}${fila('🔁 Traslados enviados','trOut')}
+      ${fila('🏭 Consumo (producción y egresos)','consumo')}${fila('🗑️ Mermas','merma',true)}${fila('⚖️ Ajustes de conteo (neto)','ajuste')}${fila('📦 Stock al cierre del mes','sf')}
+      </tbody></table></div><div style="font-size:11px;color:var(--texto-2);margin-top:6px">En "Empresa", los traslados recibidos y enviados se compensan: no son compra ni consumo.</div>`;
+  } else {
+    const l = filtrar(kxInformeFab(p, f)); const F = KX_FABRICAS[f];
+    const tot = k => l.reduce((s,r)=>s + r[k]*(Number(r.ins.precio)||0), 0);
+    html = !l.length ? `<div class="empty-state"><div class="es-icon">📊</div><h4>Sin movimientos de Fábrica ${F.nombre} en ${p}</h4></div>` :
+    `<div style="font-weight:800;color:${F.color};margin-bottom:6px">🏭 Fábrica ${F.nombre} · ${p.split('-').reverse().join('/')}</div>
+    <div class="table-wrap" style="max-height:52vh;overflow:auto"><table style="font-size:12px"><thead><tr><th>Insumo</th><th style="text-align:right">Stock inicial</th><th style="text-align:right">Compras</th><th style="text-align:right">Sin factura</th><th style="text-align:right">Traslado +</th><th style="text-align:right">Traslado −</th><th style="text-align:right">Consumo</th><th style="text-align:right">Merma</th><th style="text-align:right">Ajuste</th><th style="text-align:right">Stock final</th><th style="text-align:right">$ Merma</th></tr></thead><tbody>
+    ${l.map(r=>`<tr><td><strong>${kxEsc(r.ins.desc)}</strong> <span style="font-size:10px;color:var(--texto-2)">${kxEsc(r.ins.uom||'')}</span></td>
+      <td style="text-align:right">${n(r.si)}</td><td style="text-align:right">${n(r.compras)}</td><td style="text-align:right">${n(r.sinFac)}</td>
+      <td style="text-align:right">${n(r.trIn)}</td><td style="text-align:right">${n(r.trOut)}</td><td style="text-align:right">${n(r.consumo)}</td>
+      <td style="text-align:right;color:${r.merma?'#c0392b':'inherit'}">${n(r.merma)}</td><td style="text-align:right">${n(r.ajuste + r.inicial)}</td>
+      <td style="text-align:right;font-weight:700;color:${r.sf<0?'#c0392b':'inherit'}">${n(r.sf)}</td><td style="text-align:right">${r.merma?$(r.merma, r.ins):'—'}</td></tr>`).join('')}
+    </tbody><tfoot><tr style="font-weight:800"><td>Total valorizado</td><td></td><td style="text-align:right">${fmt$(tot('compras'))}</td><td style="text-align:right">${fmt$(tot('sinFac'))}</td><td style="text-align:right">${fmt$(tot('trIn'))}</td><td style="text-align:right">${fmt$(tot('trOut'))}</td><td style="text-align:right">${fmt$(tot('consumo'))}</td><td style="text-align:right;color:#c0392b">${fmt$(tot('merma'))}</td><td></td><td style="text-align:right">${fmt$(tot('sf'))}</td><td></td></tr></tfoot></table></div>
+    <div style="font-size:11px;color:var(--texto-2);margin-top:6px">Cantidades en la unidad de cada insumo. Valores a precio actual sin IVA. "Ajuste" incluye conteos e inventario inicial.</div>`;
+  }
+  document.getElementById('kxif-res').innerHTML = html;
+  document.getElementById('kxif-ctrl').innerHTML = kxControlesFab();
+}
+// Controles de consistencia: señales de datos a revisar
+function kxControlesFab(){
+  const alertas = [];
+  (DB.inventario||[]).forEach(ins=>{
+    Object.values(KX_FABRICAS).forEach(F=>{ const v = kxStockFab(ins, F.id); if(v < -1e-6) alertas.push(`🔴 ${ins.desc}: stock negativo en ${F.nombre} (${fmtN(v)} ${ins.uom||''}). Suele pasar si se cargó en la fábrica equivocada; conviene hacer un conteo.`); });
+  });
+  const enCamino = (DB.traslados||[]).filter(t=>t.estado==='Enviado' && !t.borrado);
+  const viejos = enCamino.filter(t=>(Date.now() - (t._ts||0)) > 2*86400000);
+  if(viejos.length) alertas.push(`🟡 ${viejos.length} traslado(s) "en camino" hace más de 2 días sin recibir: ${viejos.map(t=>t.id).join(', ')}.`);
+  if(!alertas.length) return `<div style="padding:10px 12px;border-radius:8px;background:#E8F5E9;font-size:12px">✅ Controles de datos: sin stocks negativos por fábrica ni traslados demorados.</div>`;
+  return `<div style="padding:10px 12px;border-radius:8px;background:#FFF4E5;border:1px solid #f0c27a;font-size:12px"><strong>🔎 Controles de datos</strong>${alertas.map(a=>`<div style="margin-top:4px">${kxEsc(a)}</div>`).join('')}</div>`;
+}
+function kxInfFabCSV(){
+  const { p, f, filtrar } = kxInfFabDatos(); const fabs = f==='CMP' ? Object.keys(KX_FABRICAS) : [f];
+  const filas = [['Fábrica','Mes','Código','Insumo','Unidad','Stock inicial','Compras','Sin factura','Traslado recibido','Traslado enviado','Consumo','Merma','Ajuste','Stock final','Precio sin IVA']];
+  fabs.forEach(x=>filtrar(kxInformeFab(p, x)).forEach(r=>filas.push([kxFabNombre(x), p, r.ins.id, r.ins.desc, r.ins.uom||'', r.si, r.compras, r.sinFac, r.trIn, r.trOut, r.consumo, r.merma, r.ajuste + r.inicial, r.sf, r.ins.precio||0])));
+  const csv = '\ufeff' + filas.map(l=>l.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = `Informe_MP_${f==='CMP'?'comparado':kxFabNombre(f)}_${p}.csv`; document.body.appendChild(a); a.click(); a.remove();
+}
+function kxInfFabImprimir(){
+  const cont = document.getElementById('kxif-res').innerHTML;
+  const { p, f } = kxInfFabDatos();
+  const v = window.open('', '_blank'); if(!v){ toast('⚠️ El navegador bloqueó la ventana de impresión','error'); return; }
+  v.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Informe MP ${p}</title><style>@page{size:A4 landscape;margin:10mm} body{font-family:Arial;font-size:11px;color:#2A1C13}
+    table{width:100%;border-collapse:collapse} th,td{border-bottom:1px solid #D9C9B0;padding:4px} th{font-size:10px;color:#6B5A4B;text-align:left} .table-wrap{max-height:none!important;overflow:visible!important}</style></head>
+    <body onload="setTimeout(()=>window.print(),300)"><h2 style="margin:0 0 4px">Panadería Belén · Informe mensual de materia prima · ${f==='CMP'?'Comparado':'Fábrica '+kxFabNombre(f)} · ${p.split('-').reverse().join('/')}</h2>
+    <div style="font-size:10px;color:#6B5A4B;margin-bottom:8px">Impreso ${new Date().toLocaleString('es-AR')} por ${kxEsc(usuarioActual?usuarioActual.nombre:'—')}</div>${cont}</body></html>`);
+  v.document.close();
+}
+// Botón en Kardex y aviso en Remitos Internos
+(function(){
+  const poner = ()=>{
+    const tb = document.querySelector('#page-kardex .toolbar');
+    if(tb && !document.getElementById('kxif-btn')){ const b = document.createElement('button'); b.id='kxif-btn'; b.className='btn-primary'; b.textContent='📊 Informe por fábrica'; b.onclick = kxAbrirInformeFab; tb.appendChild(b); }
+    const pr = document.getElementById('page-remitos');
+    if(pr && !document.getElementById('kx-rem-aviso')){
+      const hero = pr.querySelector('.page-hero');
+      if(hero) hero.insertAdjacentHTML('afterend', `<div id="kx-rem-aviso" style="margin:0 0 12px;padding:10px 14px;border-radius:10px;background:#E3F2FD;border:1px solid #90CAF9;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span>ℹ️ <strong>Los remitos internos son solo un comprobante y no mueven stock.</strong> Usalos para sucursales y puntos de venta. Para mandar mercadería entre Sarmiento y Bayofet usá <strong>Traslados</strong>: descuenta en una fábrica y suma en la otra.</span>
+        <button class="btn-primary" onclick="kxAbrirTraslados('pend')">🚚 Ir a Traslados</button></div>`);
+    }
+  };
+  const sp = window.showPage;
+  window.showPage = showPage = function(){ const r = sp.apply(this, arguments); try{ poner(); }catch(_){} return r; };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,100)); else setTimeout(poner,100);
+  // Aviso si en un remito interno se escribe el nombre de una fábrica
+  const og = window.guardarRemito;
+  if(typeof og==='function') window.guardarRemito = guardarRemito = function(){
+    try{
+      const o = kxVal('rem-origen').toLowerCase(), d = kxVal('rem-destino').toLowerCase();
+      const esFab = t => Object.values(KX_FABRICAS).some(F=>t.includes(F.nombre.toLowerCase().slice(0,5)));
+      if(esFab(o) && esFab(d) && !confirm('Este remito parece ser entre fábricas (Sarmiento ↔ Bayofet).\n\nUn remito interno NO mueve stock. Para que se descuente en una y se sume en la otra, usá 🚚 Traslados.\n\n¿Guardar igual como comprobante?')) return;
+    }catch(_){}
+    return og.apply(this, arguments);
+  };
+})();
+
+// Robustez: los formularios de traslado abren su ventana si todavía no está abierta
+(function(){
+  const o = window.kxTrForm;
+  window.kxTrForm = kxTrForm = function(){
+    if(!document.getElementById('kxtr-body') || !document.getElementById('kx-modal-tr').classList.contains('open')){
+      if(!_kxFab){ toast('⚠️ Primero elegí la fábrica','error'); return; }
+      kxAbrirTraslados('pend');
+    }
+    return o.apply(this, arguments);
+  };
 })();
 
 </script>
