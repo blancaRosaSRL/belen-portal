@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.5';
+const BELEN_BUILD = '37.6';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -22724,6 +22724,198 @@ function kxVerFotoFab(){
     ${c.filas.map(f=>`<tr><td><strong>${kxEsc(f.desc)}</strong> <span style="font-size:10px">${kxEsc(f.uom)}</span></td><td style="text-align:right">${n(f.si)}</td><td style="text-align:right">${n(f.compras+f.sinFac)}</td><td style="text-align:right">${n(f.trIn)}</td><td style="text-align:right">${n(f.trOut)}</td><td style="text-align:right">${n(f.consumo)}</td><td style="text-align:right">${n(f.merma)}</td><td style="text-align:right">${n(f.ajuste)}</td><td style="text-align:right;font-weight:700">${n(f.sf)}</td><td style="text-align:right">${fmt$(f.sf*f.precio)}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v37.6 — 📥 IMPORTAR CONTEO (planillas transcriptas) + ARRANQUE LIMPIO
+//   Lee un archivo CSV o JSON con el conteo por fábrica y sector, muestra
+//   una vista previa y, al confirmar, deja el stock de cada fábrica EXACTO
+//   en lo contado. Opcional: los insumos que no figuran quedan en 0.
+//   · Nunca suma: fija el valor contado. Importar dos veces no duplica.
+//   · Backup completo antes. Todo queda en el Kardex y en la auditoría.
+// ═══════════════════════════════════════════════════════════════
+const KX_IMP_ROLES = ['Dueño','Administrador','Programador'];
+let _kxImp = null;
+
+function kxImpParse(txt){
+  txt = String(txt||'').replace(/^\ufeff/, '').trim();
+  if(txt.startsWith('[') || txt.startsWith('{')){
+    const j = JSON.parse(txt); return Array.isArray(j) ? j : (j.filas || []);
+  }
+  const lineas = txt.split(/\r?\n/).filter(l=>l.trim());
+  const sep = (lineas[0].match(/;/g)||[]).length >= (lineas[0].match(/,/g)||[]).length ? ';' : ',';
+  const partir = l=>{ const out=[]; let cur='', q=false; for(const ch of l){ if(ch==='"'){ q=!q; continue; } if(ch===sep && !q){ out.push(cur); cur=''; } else cur+=ch; } out.push(cur); return out.map(s=>s.trim()); };
+  const cab = partir(lineas[0]).map(h=>h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z_]/g,''));
+  return lineas.slice(1).map(l=>{ const v = partir(l); const o = {}; cab.forEach((h,i)=>o[h]=v[i]); return o; });
+}
+function kxImpNum2(v){
+  if(v==null) return 0; let s = String(v).trim(); if(s==='') return 0;
+  if(s.includes(',') && s.includes('.')) s = s.replace(/\./g,'').replace(',','.'); else s = s.replace(',','.');
+  const n = Number(s); return isFinite(n) ? n : NaN;
+}
+function kxImpFab(v){ const s = String(v||'').toLowerCase(); return Object.values(KX_FABRICAS).find(f=>s.includes(f.nombre.toLowerCase().slice(0,4)) || s===f.id.toLowerCase())?.id || null; }
+function kxImpBuscarIns(r){
+  const cod = String(r.codigo||r.cod||r.id||'').trim();
+  if(cod){ const i = getInsumo(cod) || getInsumo(cod.toUpperCase()); if(i) return { ins:i, como:'código' }; }
+  const nom = String(r.insumo||r.desc||r.descripcion||'').trim(); if(!nom) return { ins:null };
+  const ex = (DB.inventario||[]).find(i=>kxNomExact(i.desc)===kxNomExact(nom)); if(ex) return { ins:ex, como:'nombre' };
+  const par = (DB.inventario||[]).map(i=>({ i, p:kxParecido(nom, i.desc) })).filter(x=>x.p>=0.6).sort((a,b)=>b.p-a.p).slice(0,5);
+  return { ins:null, sugeridos: par.map(x=>x.i) };
+}
+function kxAbrirImportarConteo(){
+  if(!usuarioActual || !KX_IMP_ROLES.includes(usuarioActual.rol)){ toast('🔒 Solo Dueño, Administrador o Programador pueden importar un conteo','error'); return; }
+  let m = document.getElementById('kx-modal-imp');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-imp';
+    const st = 'padding:7px 9px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px';
+    m.innerHTML = `<div class="modal" style="max-width:1150px;width:96vw"><div class="modal-header"><span>📥</span><h2>Importar conteo de stock</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-imp')">✕</button></div>
+      <div class="modal-body">
+        <p style="font-size:13px;margin:0 0 10px">Elegí el archivo del conteo (CSV o JSON). Columnas: <span class="mono">fabrica; sector; encargado; codigo; insumo; cantidad</span> (y opcional <span class="mono">vencido; observaciones</span>). El stock queda <strong>exactamente</strong> en lo contado: nunca se suma a lo que había.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div><label style="display:block;font-size:11px;font-weight:700">Archivo</label><input type="file" id="kximp-file" accept=".csv,.json,.txt"></div>
+          <div><label style="display:block;font-size:11px;font-weight:700">Fecha del conteo</label><input type="date" id="kximp-fecha" style="${st}"></div>
+          <div><label style="display:block;font-size:11px;font-weight:700">Cómo registrarlo</label><select id="kximp-tipo" style="${st}">
+            <option value="inicial">📋 Inventario inicial — arranque limpio (no cuenta como pérdida)</option>
+            <option value="conteo">🔢 Conteo — las diferencias cuentan como faltante o sobrante</option></select></div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;background:#FFF4E5;border:1px solid #f0c27a;border-radius:8px;padding:8px 10px">
+          <input type="checkbox" id="kximp-reset" checked style="margin-top:3px">
+          <span><strong>Conteo general (arranque de cero):</strong> los insumos de cada fábrica que <strong>no figuran</strong> en el archivo quedan en 0 en esa fábrica. Usalo solo si se contaron todos los sectores.</span></label>
+        <div id="kximp-prev" style="margin-top:12px"></div>
+      </div>
+      <div class="modal-footer"><button class="btn-secondary" onclick="cerrarModal('kx-modal-imp')">Cancelar</button>
+        <button class="btn-primary" id="kximp-ok" onclick="kxImpConfirmar()" disabled>✅ Aplicar conteo</button></div></div>`;
+    document.body.appendChild(m);
+    document.getElementById('kximp-file').addEventListener('change', e=>{
+      const f = e.target.files[0]; if(!f) return;
+      const rd = new FileReader(); rd.onload = ()=>kxImpCargarTexto(String(rd.result), f.name); rd.readAsText(f, 'utf-8');
+    });
+    ['kximp-reset','kximp-tipo','kximp-fecha'].forEach(id=>document.getElementById(id).addEventListener('change', kxImpPrev));
+  }
+  _kxImp = null;
+  document.getElementById('kximp-file').value = '';
+  document.getElementById('kximp-fecha').value = kxHoy();
+  document.getElementById('kximp-prev').innerHTML = '';
+  document.getElementById('kximp-ok').disabled = true;
+  abrirModal('kx-modal-imp');
+}
+function kxImpCargarTexto(txt, nombre){
+  let filas;
+  try{ filas = kxImpParse(txt); }catch(e){ toast('⚠️ No se pudo leer el archivo: '+e.message,'error'); return; }
+  const rows = filas.map((r,k)=>{
+    const fab = kxImpFab(r.fabrica||r.fab), m = kxImpBuscarIns(r);
+    const cant = kxImpNum2(r.cantidad ?? r.total ?? r.cantidad_total), venc = kxImpNum2(r.vencido ?? r.vencido_roto ?? '');
+    return { k, raw:r, fab, ins:m.ins, como:m.como, sug:m.sugeridos||[], cant, venc, sector:r.sector||'', enc:r.encargado||'', obs:r.observaciones||r.obs||'', omitir:false };
+  });
+  _kxImp = { nombre, rows, firma: kxImpFirma(txt) };
+  kxImpPrev();
+}
+function kxImpFirma(t){ let h = 0; for(let i=0;i<t.length;i++){ h = ((h<<5)-h) + t.charCodeAt(i); h |= 0; } return 'IMP-' + Math.abs(h).toString(36).toUpperCase(); }
+function kxImpElegir(k, id){ const r = _kxImp.rows[k]; if(!r) return; if(id==='__omit'){ r.omitir = true; r.ins = null; } else { r.omitir = false; r.ins = getInsumo(id); r.como = 'elegido'; } kxImpPrev(); }
+function kxImpPlan(){
+  const reset = document.getElementById('kximp-reset').checked;
+  const rows = _kxImp.rows, errores = [], porFab = {};
+  rows.forEach(r=>{
+    if(r.omitir) return;
+    if(!r.fab){ errores.push(`Renglón ${r.k+2}: fábrica no reconocida ("${r.raw.fabrica||''}")`); return; }
+    if(!r.ins){ errores.push(`Renglón ${r.k+2}: insumo sin identificar ("${r.raw.insumo||r.raw.codigo||''}")`); return; }
+    if(!isFinite(r.cant) || r.cant < 0){ errores.push(`Renglón ${r.k+2}: cantidad inválida (${r.raw.cantidad})`); return; }
+    const F = porFab[r.fab] = porFab[r.fab] || {};
+    const x = F[r.ins.id] = F[r.ins.id] || { ins:r.ins, q:0, sectores:[], venc:0 };
+    x.q = +(x.q + r.cant).toFixed(4); x.venc += isFinite(r.venc) ? r.venc : 0;
+    x.sectores.push(`${r.sector||'—'} ${fmtN(r.cant)}${r.enc?' ('+r.enc+')':''}`);
+  });
+  const cambios = {};
+  Object.keys(porFab).forEach(f=>{
+    const c = cambios[f] = [];
+    Object.values(porFab[f]).forEach(x=>c.push({ ins:x.ins.id, desc:x.ins.desc, uom:x.ins.uom, actual:kxStockFab(x.ins, f), objetivo:x.q, sectores:x.sectores, venc:x.venc }));
+    if(reset) (DB.inventario||[]).forEach(i=>{ if(!porFab[f][i.id]){ const a = kxStockFab(i, f); if(Math.abs(a) > 1e-9) c.push({ ins:i.id, desc:i.desc, uom:i.uom, actual:a, objetivo:0, sectores:['no figura en el conteo'], cero:true }); } });
+  });
+  return { porFab, cambios, errores, reset };
+}
+function kxImpPrev(){
+  if(!_kxImp) return;
+  const plan = kxImpPlan(); const div = document.getElementById('kximp-prev');
+  const pend = _kxImp.rows.filter(r=>!r.omitir && (!r.ins || !r.fab));
+  const ya = (DB.movimientosMP||[]).some(m=>m.ref===_kxImp.firma);
+  let h = ya ? `<div style="padding:8px 10px;border-radius:8px;background:#fdecea;color:#c0392b;font-weight:700;margin-bottom:8px">⚠️ Este mismo archivo ya se aplicó antes (${_kxImp.firma}). Volver a aplicarlo no suma nada: solo vuelve a fijar los mismos valores.</div>` : '';
+  if(pend.length){
+    h += `<div style="padding:8px 10px;border-radius:8px;background:#FFF4E5;border:1px solid #f0c27a;margin-bottom:10px"><strong>🔎 ${pend.length} renglón(es) para resolver</strong>${pend.map(r=>`
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;font-size:12px"><span>Renglón ${r.k+2}: <strong>${kxEsc(r.raw.insumo||r.raw.codigo||'—')}</strong> · ${kxEsc(r.raw.fabrica||'')} · ${kxEsc(r.sector)} · ${kxEsc(String(r.raw.cantidad||''))}${!r.fab?' · <span style="color:#c0392b">fábrica no reconocida</span>':''}</span>
+      ${r.fab?`<select onchange="kxImpElegir(${r.k}, this.value)" style="padding:4px 6px"><option value="">¿Qué insumo es?</option>${r.sug.map(i=>`<option value="${i.id}">${kxEsc(i.desc)} (${i.id})</option>`).join('')}<option disabled>──────────</option>${(DB.inventario||[]).filter(i=>!r.sug.includes(i)).sort((a,b)=>a.desc.localeCompare(b.desc)).map(i=>`<option value="${i.id}">${kxEsc(i.desc)} (${i.id})</option>`).join('')}<option value="__omit">✕ No importar este renglón</option></select>`:'<button class="btn-secondary" style="padding:2px 8px" onclick="kxImpElegir('+r.k+',\'__omit\')">✕ No importar</button>'}</div>`).join('')}</div>`;
+  }
+  Object.entries(plan.cambios).forEach(([f, l])=>{
+    const F = KX_FABRICAS[f]; const vc = l.filter(x=>!x.cero), ce = l.filter(x=>x.cero);
+    h += `<div style="border:2px solid ${F.color};border-radius:10px;margin-bottom:12px;overflow:hidden"><div style="background:${F.color};color:#fff;padding:6px 12px;font-weight:800">🏭 Fábrica ${F.nombre} · ${vc.length} insumo(s) contados${plan.reset?` · ${ce.length} quedan en 0`:''}</div>
+      <div class="table-wrap" style="max-height:38vh;overflow:auto"><table style="font-size:12px"><thead><tr><th>Insumo</th><th>Sectores (encargado)</th><th style="text-align:right">En sistema</th><th style="text-align:right">Contado</th><th style="text-align:right">Diferencia</th></tr></thead><tbody>
+      ${l.map(x=>{ const d = +(x.objetivo - x.actual).toFixed(4); return `<tr style="${x.cero?'background:#fafafa;color:#888':''}"><td><strong>${kxEsc(x.desc)}</strong></td><td style="font-size:11px">${kxEsc(x.sectores.join(' · '))}${x.venc?` · <span style="color:#b9770e">vencido/roto aparte: ${fmtN(x.venc)}</span>`:''}</td>
+        <td style="text-align:right">${fmtN(x.actual)} ${kxEsc(x.uom||'')}</td><td style="text-align:right;font-weight:800">${fmtN(x.objetivo)}</td>
+        <td style="text-align:right;font-weight:700;color:${Math.abs(d)<1e-9?'var(--texto-2)':d>0?'#1e8449':'#c0392b'}">${Math.abs(d)<1e-9?'=':(d>0?'+':'')+fmtN(d)}</td></tr>`; }).join('')}</tbody></table></div></div>`;
+  });
+  if(!Object.keys(plan.cambios).length && !pend.length) h += '<div class="empty-state"><h4>El archivo no tiene renglones válidos</h4></div>';
+  if(plan.errores.length && !pend.length) h += `<div style="color:#c0392b;font-size:12px">${plan.errores.map(kxEsc).join('<br>')}</div>`;
+  div.innerHTML = h;
+  document.getElementById('kximp-ok').disabled = !!pend.length || !Object.keys(plan.cambios).length;
+}
+function kxImpAplicarFab(fab, cambios, ctx){
+  const antes = kxSnapshotStock();
+  cambios.forEach(x=>{ const i = getInsumo(x.ins); if(i) i.stock = Math.max(0, +Number(x.objetivo).toFixed(4)); });
+  kxRegistrarDiferencias(antes, ctx);
+}
+kxEnFab('kxImpAplicarFab', { mut:true, fab: f=>f });
+function kxImpConfirmar(){
+  if(!_kxImp) return;
+  const plan = kxImpPlan(); if(plan.errores.length){ toast('⚠️ Hay renglones sin resolver','error'); return; }
+  const fecha = kxVal('kximp-fecha') || kxHoy(), tipo = kxVal('kximp-tipo');
+  if(fecha > kxHoy()){ toast('⚠️ La fecha no puede ser futura','error'); return; }
+  const fabs = Object.keys(plan.cambios);
+  for(const f of fabs){ if(kxFabMesCerrado(f, fecha.slice(0,7)) || (typeof kxPeriodoCerrado==='function' && kxPeriodoCerrado(fecha.slice(0,7)))){ toast(`🔒 ${fecha.slice(0,7)} está cerrado en Fábrica ${kxFabNombre(f)}`,'error'); return; } }
+  const res = fabs.map(f=>`• Fábrica ${kxFabNombre(f)}: ${plan.cambios[f].filter(x=>!x.cero).length} insumos contados${plan.reset?`, ${plan.cambios[f].filter(x=>x.cero).length} quedan en 0`:''}`).join('\n');
+  const t = prompt(`Se va a fijar el stock EXACTO según el conteo del ${fecha.split('-').reverse().join('/')}, registrado como ${tipo==='inicial'?'inventario inicial (arranque limpio)':'conteo'}.\n\n${res}\n\nSe hace un backup completo antes. Para confirmar escribí CONTEO:`);
+  if(t===null) return;
+  if(t.trim().toUpperCase()!=='CONTEO'){ toast('Cancelado: no se escribió CONTEO','error'); return; }
+  try{ kxBackupAntesDe('importar-conteo'); }catch(e){ console.warn(e); }
+  let n = 0;
+  fabs.forEach(f=>{
+    const l = plan.cambios[f].filter(x=>Math.abs(x.objetivo - x.actual) > 1e-9);
+    if(!l.length) return;
+    kxImpAplicarFab(f, l, { fecha, tipo:'ajuste', org: tipo==='inicial' ? 'inicial' : 'conteo', ref:_kxImp.firma,
+      nota: `${tipo==='inicial'?'Inventario inicial':'Conteo'} importado (${_kxImp.nombre||'archivo'})` });
+    n += l.length;
+  });
+  // Nota por movimiento: sectores y encargados de cada insumo
+  try{
+    fabs.forEach(f=>plan.cambios[f].forEach(x=>{
+      const m = (DB.movimientosMP||[]).filter(mv=>mv.ref===_kxImp.firma && mv.ins===x.ins && (mv.dep||KX_FAB_P)===f).pop();
+      if(m && !m.nota.includes('·')) { m.nota += ' · ' + x.sectores.join(' · ') + (x.venc?` · vencido/roto aparte: ${fmtN(x.venc)}`:''); m._ts = Date.now(); }
+    }));
+  }catch(_){}
+  registrarAuditoria('Modificación', `Importación de conteo ${_kxImp.firma}`,
+    `${fabs.map(f=>`Fábrica ${kxFabNombre(f)}: ${plan.cambios[f].length} insumos`).join(' · ')} · ${plan.reset?'con arranque de cero':'solo contados'} · ${tipo} · fecha ${fecha} · ${n} ajuste(s)`);
+  guardarEnStorage();
+  cerrarModal('kx-modal-imp');
+  toast(`✅ Conteo aplicado: ${n} insumo(s) ajustados`,'success');
+  try{ renderInventario(); }catch(_){}
+}
+// Botón en Stock Actual y opción en Cargar datos
+(function(){
+  const ri = window.renderInventario;
+  window.renderInventario = renderInventario = function(){
+    const r = ri.apply(this, arguments);
+    try{
+      const tb = document.querySelector('#page-inventario .toolbar');
+      if(tb && !document.getElementById('kximp-btn') && usuarioActual && KX_IMP_ROLES.includes(usuarioActual.rol)){
+        const b = document.createElement('button'); b.id='kximp-btn'; b.className='btn-secondary'; b.textContent='📥 Importar conteo'; b.onclick = kxAbrirImportarConteo; tb.appendChild(b);
+      }
+    }catch(_){}
+    return r;
+  };
+  KX_QP_OPC.push({ k:'importar', ic:'📥', t:'Importar un conteo desde archivo', d:'Planillas transcriptas: fija el stock contado en cada fábrica (Dueño, Administrador).' });
+  const oq = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){ if(k==='importar'){ cerrarModal('kx-modal-qp'); kxAbrirImportarConteo(); return; } return oq.apply(this, arguments); };
+})();
 
 </script>
 </body>
