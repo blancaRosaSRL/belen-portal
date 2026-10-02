@@ -17415,7 +17415,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '37.9';
+const BELEN_BUILD = '38.0';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -23001,6 +23001,217 @@ function kxMarcarPendiente(){
     }catch(_){}
     return r;
   };
+})();
+
+</script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// v38.0 — INSUMOS COMPARTIDOS (aceite de fritura, gas, papel, limpieza…)
+//   Son insumos que se usan "por tanda" y sirven a varios productos.
+//   · COSTO: cada receta marcada suma su parte, según los kg de masa del
+//     lote:  costo por kg = (cantidad por cambio × precio) ÷ kg entre cambios.
+//   · STOCK: NO se descuenta en cada orden. Se descuenta cuando realmente se
+//     usa: "🫗 Registrar cambio" (por ejemplo, 80 L el día que se cambia).
+//   · CONTROL: compara lo real (kg fritos entre cambios) con lo estimado.
+// ═══════════════════════════════════════════════════════════════
+DB.insumosCompartidos = DB.insumosCompartidos || [];
+DB.eventosCompartidos = DB.eventosCompartidos || [];
+['insumosCompartidos','eventosCompartidos'].forEach(k=>{
+  if(!LS_KEYS_ARRAYS.includes(k)) LS_KEYS_ARRAYS.push(k);
+  if(!CLOUD_SYNC_ARRAYS.includes(k)) CLOUD_SYNC_ARRAYS.push(k);
+});
+try{ KX_ORIGEN.compartido = '🫗 Insumo compartido'; }catch(_){}
+const KX_COMP_ROLES = ['Dueño','Administrador','Administración','Programador'];
+function kxNum(v){ if(v==null) return NaN; const t = String(v).trim().replace(/\s/g,''); if(!t) return NaN;
+  return parseFloat(/,\d{1,3}$/.test(t) ? t.replace(/\./g,'').replace(',', '.') : t.replace(/,/g,'')); }
+function kxCompLista(){ return (DB.insumosCompartidos||[]).filter(c=>c && !c.borrado); }
+function kxCompKgLote(rec){ try{ return Number(pesoTotalReceta(rec))||0; }catch(_){ return 0; } }
+function kxCompCostoKg(c){
+  const ins = getInsumo(c.ins); const kg = Number(c.kgPeriodo)||0;
+  if(!ins || !(kg>0)) return 0;
+  return (Number(c.cantidad)||0) * (Number(ins.precio)||0) / kg;
+}
+// Costo extra por lote de una receta (suma de todos los compartidos que la incluyen)
+function kxCompExtraLote(rec){
+  if(!rec) return 0;
+  return kxCompLista().filter(c=>(c.recetas||[]).includes(rec.id)).reduce((s,c)=>s + kxCompCostoKg(c) * kxCompKgLote(rec), 0);
+}
+(function(){
+  const o = window.calcCostoReceta;
+  window.calcCostoReceta = calcCostoReceta = function(rec, unidades, _vis){
+    const base = o.apply(this, arguments);
+    if(_vis) return base;                       // sub-recetas: solo ingredientes
+    try{ return base + kxCompExtraLote(rec) * (Number(unidades)||0); }catch(_){ return base; }
+  };
+})();
+
+// ─── Ventana principal ────────────────────────────────────────
+function kxAbrirCompartidos(){
+  let m = document.getElementById('kx-modal-comp');
+  if(!m){
+    m = document.createElement('div'); m.className='modal-overlay'; m.id='kx-modal-comp';
+    m.innerHTML = `<div class="modal" style="max-width:1100px;width:96vw"><div class="modal-header"><span>🫗</span><h2>Insumos compartidos</h2>
+      <button class="modal-close" onclick="cerrarModal('kx-modal-comp')">✕</button></div><div class="modal-body" id="kxc-body"></div></div>`;
+    document.body.appendChild(m);
+  }
+  kxCompRender(); abrirModal('kx-modal-comp');
+}
+function kxCompPuedeEditar(){ return !!usuarioActual && KX_COMP_ROLES.includes(usuarioActual.rol); }
+function kxCompRender(){
+  const l = kxCompLista();
+  const ult = c => (DB.eventosCompartidos||[]).filter(e=>e.comp===c.id && !e.borrado).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)))[0];
+  document.getElementById('kxc-body').innerHTML = `
+    <p style="font-size:13px;margin:0 0 10px">Para insumos que se usan <strong>por tanda</strong> y sirven a varios productos, como el <strong>aceite de fritura</strong>. El costo se reparte entre las recetas marcadas según los kilos de masa, y el stock se descuenta recién cuando se registra el cambio.</p>
+    ${kxCompPuedeEditar()?'<button class="btn-primary" onclick="kxCompForm()">➕ Nuevo insumo compartido</button>':''}
+    ${!l.length ? '<div class="empty-state"><div class="es-icon">🫗</div><h4>Todavía no hay insumos compartidos</h4><p>Ejemplo: aceite de fritura, 80 L cada 7 días.</p></div>' :
+    `<div class="table-wrap" style="margin-top:10px"><table style="font-size:12px"><thead><tr><th>Insumo compartido</th><th>Se usa</th><th style="text-align:right">Kg de masa entre cambios</th><th style="text-align:right">Costo por kg de masa</th><th>Recetas</th><th>Último cambio</th><th></th></tr></thead><tbody>${
+      l.map(c=>{ const ins = getInsumo(c.ins); const u = ult(c);
+        return `<tr><td><strong>${kxEsc(c.nombre)}</strong><div style="font-size:10px;color:var(--texto-2)">${kxEsc(ins?ins.desc:'⚠️ insumo no encontrado')} · ${fmt$(ins?ins.precio:0)} por ${kxEsc(ins?ins.uom:'')}</div></td>
+          <td>${fmtN(c.cantidad)} ${kxEsc(ins?ins.uom:'')} cada ${fmtN(c.dias)} días</td>
+          <td style="text-align:right">${fmtN(c.kgPeriodo)} kg</td><td style="text-align:right;font-weight:800">${fmt$(kxCompCostoKg(c))}</td>
+          <td>${(c.recetas||[]).length}</td><td style="font-size:11px">${u?`${u.fecha.split('-').reverse().join('/')} · ${kxEsc(kxFabNombre(u.fab))}`:'—'}</td>
+          <td style="white-space:nowrap"><button class="btn-primary" style="padding:4px 9px" onclick="kxCompEvento('${c.id}')">🫗 Registrar cambio</button>
+            <button class="btn-secondary" style="padding:4px 9px" onclick="kxCompReal('${c.id}')">📊 Real vs estimado</button>
+            ${kxCompPuedeEditar()?`<button class="btn-secondary" style="padding:4px 9px" onclick="kxCompForm('${c.id}')">✏️</button>`:''}</td></tr>`; }).join('')
+    }</tbody></table></div>`}
+    ${l.length ? `<h3 style="margin:16px 0 6px;font-size:14px">💲 Cuánto suma a cada receta</h3>${kxCompTablaRecetas()}` : ''}`;
+}
+function kxCompTablaRecetas(){
+  const recs = [...new Set(kxCompLista().flatMap(c=>c.recetas||[]))].map(id=>getReceta(id)).filter(Boolean);
+  if(!recs.length) return '<div style="font-size:12px;color:var(--texto-2)">Ninguna receta marcada todavía.</div>';
+  return `<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Receta</th><th style="text-align:right">Masa por lote</th><th style="text-align:right">Ingredientes por lote</th><th style="text-align:right">+ Compartidos por lote</th><th style="text-align:right">Costo total por lote</th><th style="text-align:right">Por unidad</th></tr></thead><tbody>${
+    recs.map(r=>{ const kg = kxCompKgLote(r), extra = kxCompExtraLote(r), tot = calcCostoReceta(r, 1);
+      let pu = '—'; try{ const c = calcularRendimientoCompleto(r); const n = Number(c.piezas||c.porciones||0); if(n>0) pu = fmt$(tot/n); }catch(_){}
+      return `<tr><td><strong>${kxEsc(r.nombre)}</strong></td><td style="text-align:right">${fmtN(+kg.toFixed(2))} kg</td><td style="text-align:right">${fmt$(tot - extra)}</td>
+        <td style="text-align:right;color:#A34E17;font-weight:700">+ ${fmt$(extra)}</td><td style="text-align:right;font-weight:800">${fmt$(tot)}</td><td style="text-align:right">${pu}</td></tr>`; }).join('')
+  }</tbody></table></div><div style="font-size:11px;color:var(--texto-2);margin-top:4px">Este costo ya está incluido en el costo de la receta, en las órdenes de producción y en los informes.</div>`;
+}
+// Alta / edición
+function kxCompForm(id){
+  if(!kxCompPuedeEditar()){ toast('🔒 Solo Dueño, Administrador, Administración o Programador','error'); return; }
+  const c = id ? kxCompLista().find(x=>x.id===id) : null;
+  const st = 'width:100%;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-size:13px;box-sizing:border-box';
+  const recs = (DB.recetas||[]).filter(r=>!r.baja).sort((a,b)=>String(a.nombre).localeCompare(String(b.nombre)));
+  const sel = new Set(c ? c.recetas||[] : []);
+  document.getElementById('kxc-body').innerHTML = `<h3 style="margin:0 0 10px">${c?'✏️ Editar':'➕ Nuevo'} insumo compartido</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+      <div class="form-group"><label>Nombre *</label><input id="kxc-nom" style="${st}" value="${kxEsc(c?c.nombre:'Aceite de fritura')}"></div>
+      <div class="form-group"><label>Insumo del stock *</label><select id="kxc-ins" style="${st}"><option value="">Elegir…</option>${
+        (DB.inventario||[]).filter(i=>(i.estado||'Activo')==='Activo').sort((a,b)=>String(a.desc).localeCompare(String(b.desc))).map(i=>`<option value="${i.id}" ${c&&c.ins===i.id?'selected':''}>${kxEsc(i.desc)} (${kxEsc(i.uom||'')})</option>`).join('')}</select></div>
+      <div class="form-group"><label>Cantidad que se usa en cada cambio *</label><input id="kxc-cant" type="number" min="0" step="0.1" style="${st}" value="${c?c.cantidad:80}"></div>
+      <div class="form-group"><label>Cada cuántos días se cambia</label><input id="kxc-dias" type="number" min="1" step="1" style="${st}" value="${c?c.dias:7}"></div>
+      <div class="form-group"><label>Kg de masa que se procesan entre cambios *</label><input id="kxc-kg" type="number" min="0" step="1" style="${st}" value="${c?c.kgPeriodo:''}" placeholder="Ej: 400"><span class="hint">Lo usa para repartir el costo. Después podés ajustarlo con el dato real.</span></div>
+    </div>
+    <div id="kxc-calc" style="margin:8px 0;padding:8px 10px;border-radius:8px;background:var(--miga,#f6efe3);font-size:13px"></div>
+    <div class="form-group"><label>Recetas que usan este insumo (por ejemplo, todo lo frito)</label>
+      <input id="kxc-busca" placeholder="Filtrar recetas…" style="${st};margin-bottom:6px">
+      <div id="kxc-recs" style="max-height:240px;overflow:auto;border:1px solid var(--borde,#e5d8c3);border-radius:8px;padding:6px 10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:2px 12px">${
+        recs.map(r=>`<label class="kxc-rec" data-n="${kxEsc(String(r.nombre).toLowerCase())}" style="display:flex;gap:6px;align-items:center;font-size:12px;padding:3px 0"><input type="checkbox" value="${r.id}" ${sel.has(r.id)?'checked':''}> ${kxEsc(r.nombre)} <span style="color:var(--texto-2);font-size:10px">(${fmtN(+kxCompKgLote(r).toFixed(2))} kg/lote)</span></label>`).join('')}</div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      ${c?`<button class="btn-danger" onclick="kxCompBorrar('${c.id}')">🗑️ Quitar</button><span style="flex:1"></span>`:''}
+      <button class="btn-secondary" onclick="kxCompRender()">Volver</button><button class="btn-primary" onclick="kxCompGuardar('${c?c.id:''}')">✅ Guardar</button></div>`;
+  const calc = ()=>{ const ins = getInsumo(kxVal('kxc-ins')); const cant = parseFloat(kxVal('kxc-cant'))||0, kg = parseFloat(kxVal('kxc-kg'))||0;
+    document.getElementById('kxc-calc').innerHTML = ins && cant && kg
+      ? `🧮 ${fmtN(cant)} ${kxEsc(ins.uom||'')} × ${fmt$(ins.precio)} = <strong>${fmt$(cant*ins.precio)}</strong> por cambio ÷ ${fmtN(kg)} kg = <strong>${fmt$(cant*ins.precio/kg)} por kg de masa</strong> · ${fmtN(+(cant/kg).toFixed(3))} ${kxEsc(ins.uom||'')} por kg`
+      : 'Completá insumo, cantidad y kg para ver el costo por kilo.'; };
+  ['kxc-ins','kxc-cant','kxc-kg'].forEach(i=>{ const e = document.getElementById(i); e.addEventListener('input', calc); e.addEventListener('change', calc); });
+  document.getElementById('kxc-busca').addEventListener('input', e=>{ const q = e.target.value.toLowerCase(); document.querySelectorAll('.kxc-rec').forEach(l=>{ l.style.display = l.dataset.n.includes(q) ? '' : 'none'; }); });
+  calc();
+}
+function kxCompGuardar(id){
+  const nombre = kxVal('kxc-nom').trim(), ins = kxVal('kxc-ins'), cantidad = parseFloat(kxVal('kxc-cant'))||0, dias = parseInt(kxVal('kxc-dias'),10)||7, kgPeriodo = parseFloat(kxVal('kxc-kg'))||0;
+  const recetas = [...document.querySelectorAll('#kxc-recs input:checked')].map(x=>x.value);
+  if(!nombre || !ins || !(cantidad>0) || !(kgPeriodo>0)){ toast('⚠️ Completá nombre, insumo, cantidad y kg de masa','error'); return; }
+  if(!recetas.length && !confirm('No marcaste ninguna receta: el costo no se va a repartir. ¿Guardar igual?')) return;
+  const ahora = Date.now();
+  let c = id ? DB.insumosCompartidos.find(x=>x.id===id) : null;
+  const antes = c ? JSON.stringify({cantidad:c.cantidad, kg:c.kgPeriodo, n:(c.recetas||[]).length}) : '';
+  if(!c){ c = { id:'IC-' + ahora.toString(36).toUpperCase() }; DB.insumosCompartidos.push(c); }
+  Object.assign(c, { nombre, ins, cantidad, dias, kgPeriodo, recetas, _ts: ahora, por: usuarioActual.nombre });
+  registrarAuditoria(id?'Modificación':'Creación', `Insumo compartido ${c.id} — ${nombre}`, `${fmtN(cantidad)} cada ${dias} días · ${fmtN(kgPeriodo)} kg entre cambios · ${recetas.length} receta(s) · ${fmt$(kxCompCostoKg(c))} por kg${antes?' · antes '+antes:''}`);
+  guardarEnStorage(); toast(`✅ ${nombre} guardado · ${fmt$(kxCompCostoKg(c))} por kg de masa`,'success');
+  try{ renderRecetas(); }catch(_){}
+  kxCompRender();
+}
+function kxCompBorrar(id){
+  const c = DB.insumosCompartidos.find(x=>x.id===id); if(!c) return;
+  if(!confirm(`¿Quitar "${c.nombre}"? Las recetas dejan de sumar ese costo. Los cambios ya registrados quedan en el Kardex.`)) return;
+  c.borrado = true; c._ts = Date.now(); registrarAuditoria('Eliminación', `Insumo compartido ${c.id} — ${c.nombre}`, 'Quitado');
+  guardarEnStorage(); try{ renderRecetas(); }catch(_){} kxCompRender();
+}
+// ─── Registrar el cambio (descuenta el stock real) ─────────────
+function kxCompAplicar(fab, insId, cant, ctx){
+  const antes = kxSnapshotStock(); const i = getInsumo(insId);
+  if(i) i.stock = Math.max(0, +((Number(i.stock)||0) - cant).toFixed(4));
+  kxRegistrarDiferencias(antes, ctx);
+}
+kxEnFab('kxCompAplicar', { mut:true, fab: f=>f });
+function kxCompEvento(id){
+  const c = kxCompLista().find(x=>x.id===id); if(!c) return;
+  if(!kxInsPuedeEditar()){ toast('🔒 Tu rol solo puede ver el inventario','error'); return; }
+  if(!_kxFab){ toast('⚠️ Primero elegí la fábrica','error'); return; }
+  const ins = getInsumo(c.ins); if(!ins){ toast('⚠️ El insumo de este compartido ya no existe','error'); return; }
+  const hay = kxStockFab(ins, _kxFab);
+  const v = prompt(`🫗 Registrar cambio de "${c.nombre}" en Fábrica ${kxFabNombre(_kxFab)}\n\nHay ${fmtN(hay)} ${ins.uom||''} de ${ins.desc} en esta fábrica.\n¿Cuánto se usó en este cambio?`, String(c.cantidad));
+  if(v===null) return;
+  const cant = kxNum(v);
+  if(!(cant>0)){ toast('⚠️ Cantidad inválida','error'); return; }
+  const hoy = kxHoy(); if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
+  if(cant > hay + 1e-9 && !confirm(`En Fábrica ${kxFabNombre(_kxFab)} figuran ${fmtN(hay)} ${ins.uom||''} y vas a descontar ${fmtN(cant)}. El stock quedará en 0. ¿Seguir?`)) return;
+  const ref = 'CA-' + Date.now().toString(36).toUpperCase().slice(-6);
+  kxCompAplicar(_kxFab, c.ins, cant, { fecha: hoy, tipo:'egreso', org:'compartido', ref, nota:`Cambio de ${c.nombre}` });
+  DB.eventosCompartidos.push({ id: ref, comp: c.id, ins: c.ins, cantidad: cant, fecha: hoy, fab: _kxFab, por: usuarioActual.nombre, _ts: Date.now() });
+  registrarAuditoria('Modificación', `Cambio ${ref} — ${c.nombre}`, `${fmtN(cant)} ${ins.uom||''} en Fábrica ${kxFabNombre(_kxFab)}`);
+  guardarEnStorage(); toast(`🫗 Cambio registrado: −${fmtN(cant)} ${ins.uom||''} de ${ins.desc} en ${kxFabNombre(_kxFab)}`,'success');
+  try{ if(document.getElementById('kx-modal-comp')?.classList.contains('open')) kxCompRender(); }catch(_){}
+}
+// ─── Real vs estimado: kg de masa procesados entre un cambio y el siguiente ───
+function kxCompPeriodos(c){
+  const ev = (DB.eventosCompartidos||[]).filter(e=>e.comp===c.id && !e.borrado).sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)) || (a._ts||0)-(b._ts||0));
+  const per = [];
+  ev.forEach((e,k)=>{
+    const prev = ev.slice(0,k).reverse().find(x=>x.fab===e.fab); if(!prev) return;
+    const kg = (DB.ordenes||[]).filter(o=>o.estado==='Ejecutada' && (o.dep||KX_FAB_P)===e.fab && (c.recetas||[]).includes(o.recetaId) && o.fecha > prev.fecha && o.fecha <= e.fecha)
+      .reduce((s,o)=>{ const r = getReceta(o.recetaId); return s + (r ? kxCompKgLote(r) * (Number(o.lotes||o.unidades)||0) : 0); }, 0);
+    per.push({ desde: prev.fecha, hasta: e.fecha, fab: e.fab, cant: e.cantidad, kg });
+  });
+  return per;
+}
+function kxCompReal(id){
+  const c = kxCompLista().find(x=>x.id===id); if(!c) return;
+  const ins = getInsumo(c.ins); const u = ins ? ins.uom||'' : ''; const per = kxCompPeriodos(c).reverse();
+  const conKg = per.filter(p=>p.kg>0); const prom = conKg.length ? conKg.reduce((s,p)=>s+p.kg,0) / conKg.length : 0;
+  document.getElementById('kxc-body').innerHTML = `<h3 style="margin:0 0 6px">📊 ${kxEsc(c.nombre)}: real vs estimado</h3>
+    <p style="font-size:12px;margin:0 0 8px">Para cada período entre dos cambios se suman los kg de masa de las órdenes <strong>ejecutadas</strong> de las recetas marcadas. Estimado actual: <strong>${fmtN(c.kgPeriodo)} kg</strong> entre cambios (${fmtN(+(c.cantidad/c.kgPeriodo).toFixed(3))} ${kxEsc(u)} por kg).</p>
+    ${!per.length ? '<div class="empty-state"><h4>Hacen falta al menos dos cambios registrados en la misma fábrica</h4><p>El primer cambio marca el inicio; desde el segundo ya se puede comparar.</p></div>' :
+    `<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Período</th><th>Fábrica</th><th style="text-align:right">Usado</th><th style="text-align:right">Kg de masa procesados</th><th style="text-align:right">${kxEsc(u)} por kg real</th><th style="text-align:right">vs estimado</th></tr></thead><tbody>${
+      per.map(p=>{ const real = p.kg>0 ? p.cant/p.kg : null, est = c.cantidad/c.kgPeriodo; const dif = real!=null ? (real-est)/est*100 : null;
+        return `<tr><td>${p.desde.split('-').reverse().join('/')} → ${p.hasta.split('-').reverse().join('/')}</td><td>${kxEsc(kxFabNombre(p.fab))}</td><td style="text-align:right">${fmtN(p.cant)} ${kxEsc(u)}</td>
+          <td style="text-align:right">${fmtN(+p.kg.toFixed(1))} kg</td><td style="text-align:right">${real!=null?fmtN(+real.toFixed(3)):'—'}</td>
+          <td style="text-align:right;font-weight:700;color:${dif==null?'inherit':Math.abs(dif)>20?'#c0392b':'#1e8449'}">${dif==null?'sin órdenes':(dif>0?'+':'')+dif.toFixed(0)+'%'}</td></tr>`; }).join('')
+    }</tbody></table></div>
+    ${prom>0?`<div style="margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--miga,#f6efe3);font-size:13px">Promedio real: <strong>${fmtN(Math.round(prom))} kg</strong> entre cambios.
+      ${kxCompPuedeEditar()?` <button class="btn-primary" style="margin-left:8px" onclick="kxCompUsarReal('${c.id}', ${Math.round(prom)})">Usar ${fmtN(Math.round(prom))} kg como estimado</button>`:''}</div>`:''}`}
+    <div style="text-align:right;margin-top:12px"><button class="btn-secondary" onclick="kxCompRender()">Volver</button></div>`;
+}
+function kxCompUsarReal(id, kg){
+  const c = DB.insumosCompartidos.find(x=>x.id===id); if(!c) return;
+  if(!confirm(`Cambiar el estimado de ${fmtN(c.kgPeriodo)} kg a ${fmtN(kg)} kg entre cambios? El costo por kg de las recetas se recalcula.`)) return;
+  registrarAuditoria('Modificación', `Insumo compartido ${c.id} — ${c.nombre}`, `Estimado ${c.kgPeriodo} → ${kg} kg (dato real)`);
+  c.kgPeriodo = kg; c._ts = Date.now(); guardarEnStorage(); try{ renderRecetas(); }catch(_){} kxCompRender();
+}
+// ─── Entradas: Recetas y 📦 Cargar datos ───────────────────────
+(function(){
+  const poner = ()=>{
+    const tb = document.querySelector('#page-recetas .toolbar');
+    if(tb && !document.getElementById('kxc-btn')){ const b = document.createElement('button'); b.id = 'kxc-btn'; b.className = 'btn-secondary'; b.textContent = '🫗 Insumos compartidos (aceite de fritura…)'; b.onclick = kxAbrirCompartidos; tb.appendChild(b); }
+  };
+  const sp = window.showPage;
+  window.showPage = showPage = function(){ const r = sp.apply(this, arguments); try{ poner(); }catch(_){} return r; };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', ()=>setTimeout(poner,120)); else setTimeout(poner,120);
+  KX_QP_OPC.splice(KX_QP_OPC.findIndex(o=>o.k==='egreso')+1, 0, { k:'compartido', ic:'🫗', t:'Cambio de aceite u otro insumo compartido', d:'Descuenta lo usado en el cambio (ej.: 80 L de aceite de fritura).' });
+  const o = window.kxQpElegir;
+  window.kxQpElegir = kxQpElegir = function(k){ if(k==='compartido'){ cerrarModal('kx-modal-qp'); kxAbrirCompartidos(); return; } return o.apply(this, arguments); };
 })();
 
 </script>
