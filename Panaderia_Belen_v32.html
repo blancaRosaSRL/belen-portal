@@ -17413,7 +17413,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '38.3';
+const BELEN_BUILD = '38.4';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -23419,6 +23419,41 @@ function kxModoCambio(s){
         guardarEnStorage(); try{ renderRecetas(); }catch(_){}
       }
     }catch(e){ console.warn('v38.3 guardar:', e); }
+    return r;
+  };
+})();
+
+</script>
+<script>
+
+// ═══════════════════════════════════════════════════════════════
+// v38.4 — Al cambiar porciones / peso por pieza / merma / alfajor, se
+//   actualizan al instante la tabla de relleno y decorado, el total del
+//   lote y el cartel de costo (antes solo los cuadritos de abajo).
+// ═══════════════════════════════════════════════════════════════
+(function(){
+  const of = window.kxFilasSecciones;
+  window.kxFilasSecciones = kxFilasSecciones = function(){
+    return String(of.apply(this, arguments)||'').replace(/<tr(?=[\s>])/g, '<tr class="kxsec"');
+  };
+  const orr = window.refrescarRendimientoReceta;
+  window.refrescarRendimientoReceta = refrescarRendimientoReceta = function(recId){
+    const r = orr.apply(this, arguments);
+    try{
+      const rec = getReceta(recId); const card = document.getElementById('receta-card-'+recId);
+      if(!rec || !card) return r;
+      const calc = calcularRendimientoCompleto(rec);
+      const masa = calcCostoReceta(rec, 1), total = kxCostoLote(rec, 1);
+      const tb = card.querySelector('table tbody');
+      if(tb){ tb.querySelectorAll('tr.kxsec').forEach(t=>t.remove()); tb.insertAdjacentHTML('beforeend', kxFilasSecciones(rec, calc, masa)); }
+      const tf = card.querySelector('table tfoot tr');
+      if(tf && tf.children[1]) tf.children[1].textContent = fmt$(total);
+      const badge = [...card.querySelectorAll('.card-actions span')].find(s=>/^\s*Costo:/.test(s.textContent));
+      if(badge){
+        const secc = (Number(calc.costoRellenoTotal)||0) + (Number(calc.costoDecTotal)||0);
+        badge.innerHTML = `Costo: ${total>0 ? fmt$(total) : '⚠️ Sin precios'} / lote${secc>0?' <span style="font-weight:400;opacity:.85">(masa + relleno + decorado)</span>':''}`;
+      }
+    }catch(e){ console.warn('v38.4 refrescar:', e); }
     return r;
   };
 })();
