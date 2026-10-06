@@ -6329,7 +6329,7 @@ function refrescarRendimientoReceta(recId){
       ? `≈ ${fmtN(c.pesoPorcionCruda)} g c/u${c.pesoFinalPieza>0 && c.pesoFinalPieza!==c.pesoPorcionCruda?` · ${fmtN(c.pesoFinalPieza)} g cocida`:''}`
       : '');
   }
-  set('rend-costo-'+recId, fmt$(c.costoUnidad));
+  set('rend-costo-'+recId, fmt$(c.costoUnidadTotal||c.costoUnidad));
   set('rend-precio-'+recId, c.precioSugerido > 0 ? fmt$(c.precioSugerido) : '—');
   set('rend-alfajores-'+recId, c.alfajores > 0 ? fmtN(c.alfajores) : '—');
   set('rend-costoalf-'+recId, c.alfajores > 0 ? fmt$(c.costoAlfajorTotal||c.costoAlfajor) : '—');
@@ -17413,7 +17413,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '38.2';
+const BELEN_BUILD = '38.3';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -23300,6 +23300,129 @@ function kxMixInfo(){
   const a = window.actualizarMix;
   if(typeof a==='function') window.actualizarMix = actualizarMix = function(){ const r = a.apply(this, arguments); kxMixInfo(); return r; };
 })();
+</script>
+<script>
+
+// ═══════════════════════════════════════════════════════════════
+// v38.3 — Relleno y decorado: cantidades "por unidad" o "por lote completo"
+//   rec.rellenoModo / rec.decoradoModo = 'unidad' (por defecto) | 'lote'
+//   En modo lote, para costear se divide entre las unidades del lote y para
+//   el stock se descuenta la cantidad del lote (aunque no haya rinde cargado).
+// ═══════════════════════════════════════════════════════════════
+const KX_SECC = ['relleno','decorado'];
+function kxModoSecc(rec, s){ return rec && rec[s+'Modo']==='lote' ? 'lote' : 'unidad'; }
+function kxHayLote(rec){ return KX_SECC.some(s=>kxModoSecc(rec,s)==='lote' && (rec[s]||[]).length); }
+let _kxRendOrig = null;
+// Unidades del lote: no dependen del relleno ni del decorado
+function kxUndLote(rec){ const c = _kxRendOrig(Object.assign({}, rec, { relleno:[], decorado:[] })); return rec.esAlfajor ? c.alfajores : c.piezas; }
+// Costo directo de una sección cargada por lote
+function kxCostoSeccLote(lista){
+  return (lista||[]).reduce((s, ing)=>{ const q = Number(ing.qty)||0;
+    if(ing.rec){ const sub = getReceta(ing.rec); const kg = sub ? pesoTotalReceta(sub) : 0; return s + (kg>0 ? calcCostoReceta(sub,1)/kg*q : 0); }
+    const i = getInsumo(ing.ins); return s + (i ? (Number(i.precio)||0)*q : 0); }, 0);
+}
+(function(){
+  _kxRendOrig = window.calcularRendimientoCompleto;
+  window.calcularRendimientoCompleto = calcularRendimientoCompleto = function(rec){
+    if(!rec || !kxHayLote(rec)) return _kxRendOrig.apply(this, arguments);
+    const und = kxUndLote(rec);
+    const copia = Object.assign({}, rec);
+    KX_SECC.forEach(s=>{ if(kxModoSecc(rec,s)==='lote') copia[s] = und>0 ? (rec[s]||[]).map(g=>Object.assign({}, g, { qty:(Number(g.qty)||0)/und })) : []; });
+    const c = _kxRendOrig.call(this, copia);
+    if(!(und>0)){
+      // Sin rinde: igual se suma el costo del lote completo
+      let extra = 0;
+      if(kxModoSecc(rec,'relleno')==='lote'){ c.costoRellenoTotal = kxCostoSeccLote(rec.relleno); extra += c.costoRellenoTotal; }
+      if(kxModoSecc(rec,'decorado')==='lote'){ c.costoDecTotal = kxCostoSeccLote(rec.decorado); extra += c.costoDecTotal; }
+      c.costoTotal = (Number(c.costoTotal)||0) + extra;
+    }
+    return c;
+  };
+  const oi = window.insumosNecesariosReceta;
+  window.insumosNecesariosReceta = insumosNecesariosReceta = function(rec, lotes, mapa, _vis){
+    if(_vis || !rec || !kxHayLote(rec)) return oi.apply(this, arguments);
+    const sinLote = Object.assign({}, rec);
+    const items = [];
+    KX_SECC.forEach(s=>{ if(kxModoSecc(rec,s)==='lote'){ items.push(...(rec[s]||[])); sinLote[s] = []; } });
+    const out = oi.call(this, sinLote, lotes, mapa);
+    // Las secciones por lote se tratan como ingredientes del lote
+    const extra = oi.call(this, { id: rec.id, nombre: rec.nombre, ingredientes: items, relleno: [], decorado: [] }, lotes, {});
+    Object.entries(extra).forEach(([k,v])=>{ out[k] = (out[k]||0) + v; });
+    return out;
+  };
+})();
+// Tabla de la receta: mostrar "por lote" cuando corresponde
+(function(){
+  const o = window.kxFilasSecciones;
+  if(typeof o!=='function') return;
+  window.kxFilasSecciones = kxFilasSecciones = function(r, calc, costoMasa){
+    if(!kxHayLote(r)) return o.apply(this, arguments);
+    const und = r.esAlfajor ? calc.alfajores : calc.piezas;
+    const sec = (s, titulo)=>{
+      const lista = r[s]; if(!lista || !lista.length) return '';
+      const lote = kxModoSecc(r,s)==='lote';
+      return `<tr><td colspan="7" style="background:var(--miga,#f6efe3);font-weight:800;font-size:11px;letter-spacing:.5px;padding:6px 14px">${titulo} ${lote?'(cantidades por lote completo)':'(por unidad × rinde del lote)'}</td></tr>` + lista.map(ing=>{
+        let cod, nom, uom, pu;
+        if(ing.rec){ const sb = getReceta(ing.rec); const kg = sb ? pesoTotalReceta(sb) : 0; cod = ing.rec; nom = sb ? '📋 '+sb.nombre : '?'; uom = 'kg'; pu = sb && kg>0 ? calcCostoReceta(sb,1)/kg : 0; }
+        else { const i = getInsumo(ing.ins); cod = ing.ins; nom = i ? i.desc : '?'; uom = i ? i.uom : ''; pu = i ? Number(i.precio)||0 : 0; }
+        const qu = Number(ing.qty)||0, q = lote ? qu : qu*(und||0);
+        const det = lote ? (und>0 ? `por lote · ${(qu/und).toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad` : 'por lote') : `${qu.toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad × ${fmtN(Math.round(und||0))}`;
+        return `<tr><td><span class="mono">${cod}</span></td><td>${nom}<div style="font-size:10px;color:var(--texto-2)">${det}</div></td><td>${fmtN(+q.toFixed(3))}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
+      }).join('');
+    };
+    return `<tr style="background:var(--miga-dk)"><td colspan="5" style="padding:8px 14px;font-weight:700;font-size:11px;color:var(--corteza)">Subtotal masa</td><td style="padding:8px 14px;font-weight:700">${fmt$(costoMasa)}</td><td></td></tr>`
+      + sec('relleno','🍯 RELLENO') + sec('decorado','🎨 DECORADO / TERMINACIÓN');
+  };
+})();
+// Editor de recetas: selector por sección
+function kxModoUI(){
+  KX_SECC.forEach(s=>{
+    if(document.getElementById('rec-'+s+'-modo')) return;
+    const hint = document.getElementById('rec-'+s+'-hint'); if(!hint) return;
+    hint.insertAdjacentHTML('afterend', `<select id="rec-${s}-modo" onchange="kxModoCambio('${s}')" title="Cómo se cargan las cantidades" style="padding:4px 6px;border:1.5px solid var(--trigo);border-radius:6px;font-size:12px;font-weight:700">
+      <option value="unidad">Cantidades por unidad</option><option value="lote">Cantidades por lote completo</option></select>`);
+  });
+}
+function kxModoCambio(s){
+  const m = (document.getElementById('rec-'+s+'-modo')||{}).value || 'unidad';
+  const hint = document.getElementById('rec-'+s+'-hint');
+  if(hint) hint.textContent = m==='lote' ? '— cantidad total para todo el lote' : '— cantidad por unidad, se multiplica por el rinde';
+  document.querySelectorAll('#rec-'+s+'-list .ing-qty').forEach(i=>{ i.placeholder = m==='lote' ? 'Cant. por lote' : 'Cant. por unidad'; });
+  const tip = document.querySelector('#rec-'+s+'-body > div:first-child');
+  if(tip) tip.innerHTML = m==='lote'
+    ? '💡 Ingresá la cantidad de cada ingrediente <strong>para todo el lote</strong> (por ejemplo, 1,5 kg de chocolate para toda la tanda). El sistema la reparte entre las unidades para el costo por unidad.'
+    : (s==='relleno' ? '💡 Ingresá la cantidad de cada ingrediente <strong>por unidad final</strong> (por alfajor, por porción, etc.). El sistema lo multiplica por el rinde de la receta de masa para calcular el costo total.'
+                     : '💡 Baño de chocolate, coco rallado, azúcar impalpable, etiqueta, etc. <strong>Por unidad final.</strong>');
+}
+(function(){
+  const poner = (rec)=>{ kxModoUI(); KX_SECC.forEach(s=>{ const e = document.getElementById('rec-'+s+'-modo'); if(e){ e.value = kxModoSecc(rec, s); kxModoCambio(s); } }); };
+  const on = window.abrirNuevaReceta;
+  window.abrirNuevaReceta = abrirNuevaReceta = function(){ const r = on.apply(this, arguments); poner(null); return r; };
+  const oe = window.abrirEditarReceta;
+  window.abrirEditarReceta = abrirEditarReceta = function(id){ const r = oe.apply(this, arguments); poner(getReceta(id)); return r; };
+  const oa = window.agregarFilaSeccion;
+  window.agregarFilaSeccion = agregarFilaSeccion = function(s){ const r = oa.apply(this, arguments); try{ kxModoCambio(s); }catch(_){} return r; };
+  const og = window.guardarReceta;
+  window.guardarReceta = guardarReceta = function(){
+    const modos = {}; KX_SECC.forEach(s=>{ const e = document.getElementById('rec-'+s+'-modo'); modos[s] = e && e.value==='lote' ? 'lote' : 'unidad'; });
+    const id = recetaEditandoId, n0 = DB.recetas.length;
+    const antes = id ? JSON.stringify(KX_SECC.map(s=>kxModoSecc(getReceta(id), s))) : '';
+    // el modo tiene que estar aplicado antes de que la receta recalcule
+    if(id){ const rec0 = getReceta(id); if(rec0) KX_SECC.forEach(s=>{ rec0[s+'Modo'] = modos[s]; }); }
+    const r = og.apply(this, arguments);
+    try{
+      const rec = id ? getReceta(id) : (DB.recetas.length > n0 ? DB.recetas[DB.recetas.length-1] : null);
+      if(rec){
+        KX_SECC.forEach(s=>{ rec[s+'Modo'] = modos[s]; });
+        rec._ts = Date.now();
+        if(id && antes !== JSON.stringify(KX_SECC.map(s=>modos[s]))) registrarAuditoria('Modificación', `Receta ${rec.id} — ${rec.nombre}`, `Cantidades: relleno por ${modos.relleno}, decorado por ${modos.decorado}`);
+        guardarEnStorage(); try{ renderRecetas(); }catch(_){}
+      }
+    }catch(e){ console.warn('v38.3 guardar:', e); }
+    return r;
+  };
+})();
+
 </script>
 </body>
 </html>
