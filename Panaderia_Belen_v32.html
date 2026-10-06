@@ -5433,7 +5433,7 @@ function renderDashboard(){
   }
 
   // Costos chart
-  const costos = DB.recetas.map(r=>({nombre:r.nombre, costo:calcCostoReceta(r,1)}));
+  const costos = DB.recetas.map(r=>({nombre:r.nombre, costo:kxCostoLote(r,1)}));
   if(costos.length===0){
     document.getElementById('dash-costos').innerHTML = '<div class="empty-state"><div class="es-icon">📋</div><h4>Sin recetas cargadas</h4><p>Agregá recetas para ver el comparativo de costos</p></div>';
   } else {
@@ -6405,7 +6405,7 @@ function renderRecetas(){
         <span style="color:rgba(255,255,255,.6);font-size:12px;margin-left:8px">${r.id}</span>
         <div class="card-actions">
           ${faltantes>0?`<span style="background:var(--alerta-lt);color:var(--alerta);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">⚠️ ${faltantes} sin stock</span>`:''}
-          <span style="background:rgba(200,134,10,.3);color:var(--trigo);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">Costo: ${costo>0 ? fmt$(costo) : '⚠️ Sin precios'} / lote</span>
+          <span style="background:rgba(200,134,10,.3);color:var(--trigo);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">Costo: ${kxCostoLote(r,1)>0 ? fmt$(kxCostoLote(r,1)) : '⚠️ Sin precios'} / lote${(calc.costoRellenoTotal+calc.costoDecTotal)>0?' <span style="font-weight:400;opacity:.85">(masa + relleno + decorado)</span>':''}</span>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="abrirEscalarReceta('${r.id}')">⚖️ Escalar</button>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="imprimirReceta('${r.id}')">🖨️ Imprimir</button>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="duplicarReceta('${r.id}')">📄 Duplicar</button>
@@ -6416,10 +6416,10 @@ function renderRecetas(){
       <div class="table-wrap">
         <table>
           <thead><tr><th>Código</th><th>Insumo</th><th>Cantidad</th><th>UOM</th><th>$ Unitario</th><th>Subtotal</th><th>% Costo</th></tr></thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows}${kxFilasSecciones(r, calc, costo)}</tbody>
           <tfoot><tr style="background:var(--miga-dk)">
-            <td colspan="5" style="padding:10px 14px;font-weight:700;font-size:12px;color:var(--corteza)">COSTO TOTAL DEL LOTE</td>
-            <td style="padding:10px 14px;font-weight:700;font-size:15px;color:var(--trigo-dk)">${fmt$(costo)}</td>
+            <td colspan="5" style="padding:10px 14px;font-weight:700;font-size:12px;color:var(--corteza)">COSTO TOTAL DEL LOTE${(calc.costoRellenoTotal+calc.costoDecTotal)>0?' (masa + relleno + decorado)':''}</td>
+            <td style="padding:10px 14px;font-weight:700;font-size:15px;color:var(--trigo-dk)">${fmt$(kxCostoLote(r,1))}</td>
             <td></td>
           </tr></tfoot>
         </table>
@@ -6473,15 +6473,15 @@ function renderRecetas(){
           <div style="margin-top:6px;background:#fff;border-radius:6px;padding:8px 10px;border:1px solid var(--borde)">
             <div style="font-size:9px;font-weight:700;color:var(--texto-2);letter-spacing:.6px;margin-bottom:6px">DESGLOSE DE COSTOS</div>
             <div style="display:flex;flex-direction:column;gap:3px;font-size:12px">
-              <div style="display:flex;justify-content:space-between">
+              <div style="display:flex;justify-content:space-between;gap:12px">
                 <span>🌾 Masa (lote completo)</span>
                 <span style="font-weight:700">${fmt$(calc.costo)}</span>
               </div>
-              ${calc.costoRellenoTotal>0?`<div style="display:flex;justify-content:space-between">
+              ${calc.costoRellenoTotal>0?`<div style="display:flex;justify-content:space-between;gap:12px">
                 <span>🍯 Relleno (${r.esAlfajor?fmtN(calc.alfajores)+' alf.':fmtN(calc.piezas)+' ud.'} × ${fmt$(calc.costoRellenoPorUnidad)}/ud.)</span>
                 <span style="font-weight:700">${fmt$(calc.costoRellenoTotal)}</span>
               </div>`:''}
-              ${calc.costoDecTotal>0?`<div style="display:flex;justify-content:space-between">
+              ${calc.costoDecTotal>0?`<div style="display:flex;justify-content:space-between;gap:12px">
                 <span>🎨 Decorado (${r.esAlfajor?fmtN(calc.alfajores)+' alf.':fmtN(calc.piezas)+' ud.'} × ${fmt$(calc.costoDecPorUnidad)}/ud.)</span>
                 <span style="font-weight:700">${fmt$(calc.costoDecTotal)}</span>
               </div>`:''}
@@ -6922,7 +6922,7 @@ function renderProduccion(){
   tbody.innerHTML = DB.ordenes.map(o=>{
     const rec = getReceta(o.recetaId);
     const lotesO = o.lotes || o.unidades;
-    const costo = rec ? calcCostoReceta(rec, lotesO) : 0;
+    const costo = rec ? kxCostoLote(rec, lotesO) : 0;
     const estados = {'Planificada':'badge-pend','En proceso':'badge-camino','Ejecutada':'badge-entregado'};
     const iconos = {'Planificada':'📅','En proceso':'⚙️','Ejecutada':'✅'};
     const modoTxt = o.modo==='piezas' ? 'piezas/porc.' : 'lote(s)';
@@ -7351,7 +7351,7 @@ function calcImpactoPedido(p){
       const prod = DB.catalogoProductos.find(c=>c.id===it.catalogoId);
       if(prod){
         tipo='catalogo';
-        if(prod.recetaId){ const rec=getReceta(prod.recetaId); costoUnitario=rec?calcCostoReceta(rec,1):prod.precio; }
+        if(prod.recetaId){ const rec=getReceta(prod.recetaId); const cu=rec?kxCostoUnidad(rec):0; costoUnitario=cu>0?cu:prod.precio; }
         else costoUnitario=prod.precio;
       }
     } else {
@@ -9483,7 +9483,7 @@ function previsualizarReceta(){
     return;
   }
   const lotes = conv.lotes;
-  const costoTotal = calcCostoReceta(rec, lotes);
+  const costoTotal = kxCostoLote(rec, lotes);
 
   // Encabezado de equivalencia (ej: 6 porciones = 0,6 lotes · masa 3 kg)
   const equivalencia = modo==='piezas'
@@ -9555,7 +9555,7 @@ function guardarOrdenProduccion(){
   const conv = calcularLotesOrden(rec, modo, cantidad);
   if(conv.error){ toast('⚠️ '+conv.error,'error'); return; }
   const lotes = conv.lotes;
-  const costo = rec?calcCostoReceta(rec,lotes):0;
+  const costo = rec?kxCostoLote(rec,lotes):0;
   const chequeo = verificarStockOrden(rec, lotes);
 
   if(estado==='Ejecutada' && !chequeo.ok){
@@ -10475,8 +10475,7 @@ function calcularFinanzas(){
 
   let margenPonderado = 0;
   DB.mixVentas.forEach(m=>{
-    const rec = DB.recetas.find(r=>r.nombre.toLowerCase().includes(m.producto.toLowerCase().split(' ')[0].toLowerCase()));
-    const costo = rec ? calcCostoReceta(rec,1) : m.precio*0.4;
+    const costo = kxCostoMix(m).costo;
     const margen = m.precio>0 ? (m.precio-costo)/m.precio : 0;
     margenPonderado += margen * (m.pct/100);
   });
@@ -10635,7 +10634,7 @@ function generarReportePDF(){
   `).join('');
 
   const filasRecetas = DB.recetas.map(r=>`
-    <tr><td>${r.id}</td><td>${r.nombre}</td><td>${r.ingredientes.length} ingrediente(s)</td><td>${fmt$(calcCostoReceta(r,1))}</td></tr>
+    <tr><td>${r.id}</td><td>${r.nombre}</td><td>${r.ingredientes.length} ingrediente(s)</td><td>${fmt$(kxCostoLote(r,1))}</td></tr>
   `).join('');
 
   const filasCatalogo = SECTORES_CATALOGO.map(s=>{
@@ -10938,8 +10937,7 @@ function renderCruceConPE(rConsolidado){
   // Recalculamos el margen ponderado igual que calcularFinanzas()
   let margenPonderado = 0;
   DB.mixVentas.forEach(m=>{
-    const rec = DB.recetas.find(r=>r.nombre.toLowerCase().includes(m.producto.toLowerCase().split(' ')[0]));
-    const costo = rec ? calcCostoReceta(rec,1) : m.precio*0.4;
+    const costo = kxCostoMix(m).costo;
     const margen = m.precio>0 ? (m.precio-costo)/m.precio : 0;
     margenPonderado += margen*(m.pct/100);
   });
@@ -17415,7 +17413,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '38.0';
+const BELEN_BUILD = '38.2';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -18368,7 +18366,7 @@ function grfKardexMes(m){
   });
   return r;
 }
-function grfCostoOrden(o){ try{ const rec=getReceta(o.recetaId); return rec ? calcCostoReceta(rec, o.lotes||o.unidades) : 0; }catch(_){ return 0; } }
+function grfCostoOrden(o){ try{ const rec=getReceta(o.recetaId); return rec ? kxCostoLote(rec, o.lotes||o.unidades) : 0; }catch(_){ return 0; } }
 function grfStockPorCat(){ const m={}; (DB.inventario||[]).forEach(i=>{ const v=(Number(i.stock)||0)*(Number(i.precio)||0); if(v>0) m[i.cat||'Sin categoría']=(m[i.cat||'Sin categoría']||0)+v; });
   return Object.entries(m).map(([nombre,valor])=>({nombre,valor})); }
 function grfSumaPor(arr, clave, valor){ const m={}; arr.forEach(x=>{ const k=clave(x)||'—'; m[k]=(m[k]||0)+(valor(x)||0); }); return Object.entries(m).map(([nombre,valor])=>({nombre,valor})).sort((a,b)=>b.valor-a.valor); }
@@ -20662,7 +20660,7 @@ function kxPpCalc(){
     ri.textContent = f.rec ? f.rec.id : (f.txt ? '⚠️ Elegí una receta de la lista' : '');
     if(!f.rec || !f.conv){ li.textContent='—'; co.textContent='—'; st.textContent='—'; return; }
     if(f.conv.error){ li.textContent='—'; co.textContent='—'; st.innerHTML=`<span style="color:var(--alerta,#c0392b)">⚠️ ${kxEsc(f.conv.error)}</span>`; return; }
-    const lotes = f.conv.lotes; const c = calcCostoReceta(f.rec, lotes); costo += c;
+    const lotes = f.conv.lotes; const c = kxCostoLote(f.rec, lotes); costo += c;
     items.push({ rec:f.rec, lotes });
     li.textContent = fmtN(kxR(lotes,2)); co.textContent = fmt$(c);
     const ch = verificarStockOrden(f.rec, lotes);
@@ -20792,7 +20790,7 @@ function kxPpHtml(pp){
   const mapa = kxPpMapa(os.map(o=>({ rec:getReceta(o.recetaId), lotes:o.lotes||o.unidades, sust:o.reemplazos||null })));
   const reemp = []; os.forEach(o=>Object.entries(o.reemplazos||{}).forEach(([a,b])=>{ const t=`${getInsumo(a)?.desc||a} → ${getInsumo(b)?.desc||b}`; if(!reemp.includes(t)) reemp.push(t); }));
   const oper = []; os.forEach(o=>(o.operarios||[]).forEach(p=>{ if(p.nombre && !oper.some(x=>x.nombre===p.nombre && x.tarea===p.tarea)) oper.push(p); }));
-  const costo = os.reduce((s,o)=>{ const r=getReceta(o.recetaId); return s + (r ? calcCostoReceta(r, o.lotes||o.unidades) + kxSustDif(r, o.lotes||o.unidades, o.reemplazos) : 0); },0);
+  const costo = os.reduce((s,o)=>{ const r=getReceta(o.recetaId); return s + (r ? kxCostoLote(r, o.lotes||o.unidades) + kxSustDif(r, o.lotes||o.unidades, o.reemplazos) : 0); },0);
   const e = kxEsc;
   const ins = Object.entries(mapa).map(([id,n])=>({ i:getInsumo(id), id, n })).sort((a,b)=>String(a.i?.desc||a.id).localeCompare(String(b.i?.desc||b.id)));
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Parte ${pp}</title><style>
@@ -20999,7 +20997,7 @@ function kxOpSust(id, qty){
         box.innerHTML = (conv && !conv.error) ? kxSustBloque([{ rec, lotes:conv.lotes }], _kxSustOP, 'kxOpSust') : '';
         const ct = document.getElementById('op-costo-total');
         if(conv && !conv.error && Object.keys(_kxSustOP).length && ct){
-          const base = calcCostoReceta(rec, conv.lotes), d = kxSustDif(rec, conv.lotes, _kxSustOP);
+          const base = kxCostoLote(rec, conv.lotes), d = kxSustDif(rec, conv.lotes, _kxSustOP);
           ct.innerHTML = `${fmt$(base + d)} <span style="font-size:11px">${kxDifHtml(d, true)}</span>`;
         }
       }
@@ -21177,7 +21175,7 @@ function kxFoCoincide(o){
         });
       } else ok.forEach(x=>{ x.tr.style.display = ''; });
       const costo = ok.reduce((s,x)=>{ const rc = getReceta(x.ord.recetaId); const l = x.ord.lotes||x.ord.unidades;
-        return s + (rc ? calcCostoReceta(rc, l) + (typeof kxSustDif==='function' ? kxSustDif(rc, l, x.ord.reemplazos) : 0) : 0); }, 0);
+        return s + (rc ? kxCostoLote(rc, l) + (typeof kxSustDif==='function' ? kxSustDif(rc, l, x.ord.reemplazos) : 0) : 0); }, 0);
       const fch = _kxFo.dia ? _kxFo.dia.split('-').reverse().join('/') : '';
       document.getElementById('kxfo-res').innerHTML = `Mostrando <strong>${ok.length}</strong> de ${filas.length} orden(es)${fch?' del '+fch:''}${_kxFo.hora?' · '+_kxFo.hora+' h':''}${_kxFo.turno?' · turno '+_kxFo.turno:''}${_kxFo.estado?' · '+_kxFo.estado:''} · costo estimado ${fmt$(costo)}`;
     }catch(e){ console.warn('v35.8 filtro:', e); }
@@ -23214,6 +23212,94 @@ function kxCompUsarReal(id, kg){
   window.kxQpElegir = kxQpElegir = function(k){ if(k==='compartido'){ cerrarModal('kx-modal-qp'); kxAbrirCompartidos(); return; } return o.apply(this, arguments); };
 })();
 
+</script>
+<script>
+
+// ═══════════════════════════════════════════════════════════════
+// v38.1 — COSTO DEL LOTE COMPLETO (masa + relleno + decorado)
+//   calcCostoReceta() sigue siendo "solo masa" (lo usan las sub-recetas
+//   por kg). Para el costo real de un lote se usa kxCostoLote().
+// ═══════════════════════════════════════════════════════════════
+function kxCostoLote(rec, lotes){
+  if(!rec) return 0;
+  const l = Number(lotes)||0;
+  const masa = calcCostoReceta(rec, l);
+  try{ const c = calcularRendimientoCompleto(rec); return masa + ((Number(c.costoRellenoTotal)||0) + (Number(c.costoDecTotal)||0)) * l; }
+  catch(_){ return masa; }
+}
+// Filas del relleno y decorado en la tabla de la receta
+function kxFilasSecciones(r, calc, costoMasa){
+  const und = r.esAlfajor ? calc.alfajores : calc.piezas;
+  const sec = (lista, titulo)=>{
+    if(!lista || !lista.length) return '';
+    let filas = '';
+    lista.forEach(ing=>{
+      const q = (Number(ing.qty)||0) * (und||0);
+      let cod, nom, uom, pu;
+      if(ing.rec){ const s = getReceta(ing.rec); const kg = s ? pesoTotalReceta(s) : 0;
+        cod = ing.rec; nom = s ? '📋 '+s.nombre : '?'; uom = 'kg'; pu = s && kg>0 ? calcCostoReceta(s,1)/kg : 0; }
+      else { const i = getInsumo(ing.ins); cod = ing.ins; nom = i ? i.desc : '?'; uom = i ? i.uom : ''; pu = i ? Number(i.precio)||0 : 0; }
+      filas += `<tr><td><span class="mono">${cod}</span></td><td>${nom}<div style="font-size:10px;color:var(--texto-2)">${(Number(ing.qty)||0).toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad × ${fmtN(Math.round(und||0))}</div></td>
+        <td>${fmtN(+q.toFixed(3))}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
+    });
+    return `<tr><td colspan="7" style="background:var(--miga,#f6efe3);font-weight:800;font-size:11px;letter-spacing:.5px;padding:6px 14px">${titulo}</td></tr>` + filas;
+  };
+  const html = sec(r.relleno, '🍯 RELLENO (por unidad × rinde del lote)') + sec(r.decorado, '🎨 DECORADO / TERMINACIÓN (por unidad × rinde del lote)');
+  if(!html) return '';
+  const sinRinde = !(und>0) ? `<tr><td colspan="7" style="color:#c0392b;font-size:12px;padding:6px 14px">⚠️ Para costear el relleno y el decorado, cargá el peso por pieza o las porciones.</td></tr>` : '';
+  return `<tr style="background:var(--miga-dk)"><td colspan="5" style="padding:8px 14px;font-weight:700;font-size:11px;color:var(--corteza)">Subtotal masa</td><td style="padding:8px 14px;font-weight:700">${fmt$(costoMasa)}</td><td></td></tr>` + html + sinRinde;
+}
+
+</script>
+<script>
+
+// ═══════════════════════════════════════════════════════════════
+// v38.2 — COSTO POR UNIDAD en Finanzas, Rentabilidad y Pedidos Compartidos
+//   Antes se usaba el costo de un LOTE como si fuera el de una UNIDAD.
+// ═══════════════════════════════════════════════════════════════
+// Costo completo por unidad (masa + relleno + decorado; por alfajor si corresponde). 0 si no se puede calcular.
+function kxCostoUnidad(rec){
+  if(!rec) return 0;
+  try{ const c = calcularRendimientoCompleto(rec);
+    return rec.esAlfajor ? (Number(c.costoAlfajorTotal||c.costoAlfajor)||0) : (Number(c.costoUnidadTotal||c.costoUnidad)||0);
+  }catch(_){ return 0; }
+}
+// Receta de un producto del mix: nombre exacto → nombre contenido → primera palabra
+function kxRecetaDeMix(nombre){
+  const n = String(nombre||'').trim().toLowerCase(); if(!n) return { rec:null, como:'' };
+  const rs = (DB.recetas||[]).filter(r=>!r.baja);
+  let r = rs.find(x=>String(x.nombre).trim().toLowerCase()===n); if(r) return { rec:r, como:'exacta' };
+  r = rs.find(x=>String(x.nombre).toLowerCase().includes(n) || n.includes(String(x.nombre).toLowerCase())); if(r) return { rec:r, como:'parecida' };
+  const w = n.split(/\s+/)[0]; r = w.length>2 ? rs.find(x=>String(x.nombre).toLowerCase().includes(w)) : null;
+  return r ? { rec:r, como:'dudosa' } : { rec:null, como:'' };
+}
+// Costo por unidad de un producto del mix, con su origen
+function kxCostoMix(m){
+  const { rec, como } = kxRecetaDeMix(m.producto);
+  const cu = rec ? kxCostoUnidad(rec) : 0;
+  if(rec && cu>0) return { costo:cu, rec, como, estimado:false };
+  return { costo:(Number(m.precio)||0)*0.4, rec, como, estimado:true };
+}
+// En la tabla del mix: qué receta tomó y su costo, para poder controlarlo
+function kxMixInfo(){
+  try{
+    (DB.mixVentas||[]).forEach((m,idx)=>{
+      const inp = document.querySelector(`#tbl-mix input[type="text"][data-idx="${idx}"]`); if(!inp) return;
+      const td = inp.closest('td'); let d = td.querySelector('.kxmix-info');
+      if(!d){ d = document.createElement('div'); d.className = 'kxmix-info'; d.style.cssText = 'font-size:10px;margin-top:3px;max-width:180px;line-height:1.3'; td.appendChild(d); }
+      const x = kxCostoMix(m);
+      d.innerHTML = !x.rec ? `<span style="color:#b9770e">⚠️ Sin receta: se estima 40% del precio</span>`
+        : x.estimado ? `<span style="color:#b9770e">⚠️ ${kxEsc(x.rec.nombre)}: sin peso por pieza ni porciones, se estima 40%</span>`
+        : `<span style="color:${x.como==='dudosa'?'#b9770e':'var(--texto-2)'}">${x.como==='dudosa'?'⚠️ Revisar: ':'↳ '}${kxEsc(x.rec.nombre)} · ${fmt$(x.costo)}/u</span>`;
+    });
+  }catch(e){ console.warn('v38.2 mix:', e); }
+}
+(function(){
+  const o = window.renderTablaMix;
+  if(typeof o==='function') window.renderTablaMix = renderTablaMix = function(){ const r = o.apply(this, arguments); kxMixInfo(); return r; };
+  const a = window.actualizarMix;
+  if(typeof a==='function') window.actualizarMix = actualizarMix = function(){ const r = a.apply(this, arguments); kxMixInfo(); return r; };
+})();
 </script>
 </body>
 </html>
