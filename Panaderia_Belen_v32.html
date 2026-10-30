@@ -4341,6 +4341,19 @@ function fmtN(n){
   return v.toLocaleString('es-AR', {maximumFractionDigits: 3});
 }
 
+// v38.6 — Cantidades de materia prima: kg y litros siempre con 3 decimales (3,352 · 3,120 · 0,250).
+// Unidades sin decimales cuando son enteras. El resto (piezas, lotes, %) sigue con fmtN y los importes con fmt$.
+function fmtQ(n, uom){
+  const v = Number(n);
+  if(!isFinite(v)) return '0';
+  const u = String(uom==null?'':uom).trim().toLowerCase().replace(/\.$/,'');
+  if(/^(kg|kgs|kilo|kilos|kilogramo|kilogramos|lt|lts|l|litro|litros)$/.test(u))
+    return v.toLocaleString('es-AR', {minimumFractionDigits: 3, maximumFractionDigits: 3});
+  if(/^(un|u|ud|uds|und|unid|unidad|unidades)$/.test(u) && Math.abs(v-Math.round(v)) < 1e-9)
+    return Math.round(v).toLocaleString('es-AR', {maximumFractionDigits: 0});
+  return fmtN(v);
+}
+
 // Búsquedas en la base
 function getInsumo(id){ return DB.inventario.find(i=>i.id===id) || null; }
 function getReceta(id){ return DB.recetas.find(r=>r.id===id) || null; }
@@ -4966,7 +4979,7 @@ function busquedaGlobal(q){
     resultados.push({
       grupo:'📦 Insumos', icono:'📦',
       nombre: i.desc,
-      sub: `${fmtN(i.stock)} ${i.uom} · ${fmt$(i.precio)}`,
+      sub: `${fmtQ(i.stock, i.uom)} ${i.uom} · ${fmt$(i.precio)}`,
       accion: ()=>{ irAPagina('inventario'); cerrarBusquedaGlobal(); }
     });
   });
@@ -5429,7 +5442,7 @@ function renderDashboard(){
     divR.innerHTML='<div class="empty-state"><div class="es-icon">✅</div><h4>Todo en orden</h4><p>Sin alertas de stock</p></div>';
   } else {
     divR.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody>' +
-      reponer.map(i=>`<tr><td>${i.desc}</td><td style="color:var(--alerta);font-weight:700">${fmtN(i.stock)} ${i.uom}</td><td>${fmtN(i.min)} ${i.uom}</td></tr>`).join('') +
+      reponer.map(i=>`<tr><td>${i.desc}</td><td style="color:var(--alerta);font-weight:700">${fmtQ(i.stock, i.uom)} ${i.uom}</td><td>${fmtQ(i.min, i.uom)} ${i.uom}</td></tr>`).join('') +
       '</tbody></table></div>';
   }
 
@@ -5631,7 +5644,7 @@ function renderLotesActivos(){
       const fechaFmt = r.fecha ? r.fecha.split('-').reverse().join('/') : '—';
       // Stock total del insumo en inventario
       const inv = DB.inventario.find(i=>i.id===r.id);
-      const stockTotal = inv ? `${fmtN(inv.stock)} ${inv.uom}` : '—';
+      const stockTotal = inv ? `${fmtQ(inv.stock, inv.uom)} ${inv.uom}` : '—';
 
       return `<tr class="lote-${cls}">
         <td><span class="lote-badge ${cls}">${ico} ${txt}</span></td>
@@ -5645,7 +5658,7 @@ function renderLotesActivos(){
             color:${r.estado==='vencido'?'var(--alerta)':r.estado==='critico'?'#B7610A':r.estado==='proximo'?'#8B6914':'var(--vapor-dk)'}">
           ${r.dias===null?'—':r.dias<0?Math.abs(r.dias)+' días atrás':r.dias===0?'HOY':r.dias===1?'1 día':r.dias+' días'}
         </td>
-        <td>${fmtN(r.cantidad)}</td>
+        <td>${fmtQ(r.cantidad, r.uom)}</td>
         <td>${r.uom}</td>
         <td style="font-weight:600">${stockTotal}</td>
         <td>${fmt$(r.sinIVA)}</td>
@@ -6087,7 +6100,7 @@ function renderMateriaPrima(){
     <td><span class="mono">${r.lote||'—'}</span></td>
     <td>${r.vto ? r.vto.split('-').reverse().join('/') : 'Sin Vto.'}</td>
     <td>${donutVencimiento(dias)}</td>
-    <td><strong>${fmtN(r.cantidad)}</strong></td>
+    <td><strong>${fmtQ(r.cantidad, r.uom)}</strong></td>
     <td>${fmt$(r.sinIVA)}</td>
     <td>${r.ivaPct}%</td>
     <td><strong>${fmt$(r.conIVA)}</strong></td>
@@ -6129,7 +6142,7 @@ function renderPedidos(){
     <td>${p.fecha.split('-').reverse().join('/')}</td>
     <td><strong>${p.proveedor}</strong></td>
     <td>${p.insDesc}</td>
-    <td>${fmtN(p.cantidad)}</td>
+    <td>${fmtQ(p.cantidad, p.uom)}</td>
     <td>${uomTag(p.uom)}</td>
     <td>${fmt$(p.precioUnit)}</td>
     <td><strong>${fmt$(p.total)}</strong></td>
@@ -6166,7 +6179,7 @@ function renderInventario(){
     <td><strong>${i.desc}</strong></td>
     <td><span style="font-size:11px;color:var(--texto-2)">${i.cat}</span></td>
     <td>${uomTag(i.uom)}</td>
-    <td><strong style="font-size:15px">${fmtN(i.stock)}</strong>${(i.reservado&&i.reservado>0)?`<br><span style="font-size:10px;color:var(--naranja)">🔒 ${fmtN(i.reservado)} reservado</span>`:''}</td>
+    <td><strong style="font-size:15px">${fmtQ(i.stock, i.uom)}</strong>${(i.reservado&&i.reservado>0)?`<br><span style="font-size:10px;color:var(--naranja)">🔒 ${fmtQ(i.reservado, i.uom)} reservado</span>`:''}</td>
     <td style="color:var(--texto-2)">${fmtN(i.min)}</td>
     <td style="color:var(--texto-2)">${fmtN(i.max)}</td>
     <td>${fmt$(i.precio)}</td>
@@ -6366,7 +6379,7 @@ function renderRecetas(){
         <td><span class="mono">${ing.rec}</span></td>
         <td><span style="background:var(--vapor-dk);color:#fff;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-right:6px">📋 RECETA</span><strong>${sub?sub.nombre:'?'}</strong>
           ${sub?`<span style="cursor:pointer;font-size:11px;color:var(--vapor-dk);margin-left:6px;text-decoration:underline" onclick="irAReceta('${sub.id}')">ver</span>`:''}</td>
-        <td>${fmtN(ing.qty)}</td>
+        <td>${fmtQ(ing.qty,'kg')}</td>
         <td>${uomTag('kg')}</td>
         <td>${fmt$(costoKg)}<span style="font-size:10px;color:var(--texto-2)">/kg</span></td>
         <td><strong>${fmt$(subtotal)}</strong></td>
@@ -6385,8 +6398,8 @@ function renderRecetas(){
       const sinStock = ins && (Number(ins.stock)||0) < (Number(ing.qty)||0);
       return `<tr style="${sinStock?'background:var(--alerta-lt)':''}">
         <td><span class="mono">${ing.ins}</span></td>
-        <td>${ins?ins.desc:'?'}${sinStock?` <span title="Stock actual: ${fmtN(ins.stock)} ${ins.uom} — no alcanza para 1 lote" style="color:var(--alerta);font-weight:700">⚠️</span>`:''}</td>
-        <td>${fmtN(ing.qty)}</td>
+        <td>${ins?ins.desc:'?'}${sinStock?` <span title="Stock actual: ${fmtQ(ins.stock, ins.uom)} ${ins.uom} — no alcanza para 1 lote" style="color:var(--alerta);font-weight:700">⚠️</span>`:''}</td>
+        <td>${fmtQ(ing.qty, (ins&&ins.uom))}</td>
         <td>${ins?uomTag(ins.uom):'—'}</td>
         <td>${ins?fmt$(ins.precio):'—'}</td>
         <td><strong>${fmt$(subtotal)}</strong></td>
@@ -6663,10 +6676,10 @@ function imprimirReceta(id){
   const filas = (rec.ingredientes||[]).map(ing=>{
     if(ing.rec){
       const sub = getReceta(ing.rec);
-      return `<tr><td>📋 ${sub?sub.nombre:ing.rec} <em style="font-size:12px">(preparación)</em></td><td style="text-align:right"><strong>${fmtN(ing.qty)}</strong></td><td>kg</td></tr>`;
+      return `<tr><td>📋 ${sub?sub.nombre:ing.rec} <em style="font-size:12px">(preparación)</em></td><td style="text-align:right"><strong>${fmtQ(ing.qty,'kg')}</strong></td><td>kg</td></tr>`;
     }
     const ins = getInsumo(ing.ins);
-    return `<tr><td>${ins?ins.desc:ing.ins}</td><td style="text-align:right"><strong>${fmtN(ing.qty)}</strong></td><td>${ins?ins.uom:''}</td></tr>`;
+    return `<tr><td>${ins?ins.desc:ing.ins}</td><td style="text-align:right"><strong>${fmtQ(ing.qty, (ins&&ins.uom))}</strong></td><td>${ins?ins.uom:''}</td></tr>`;
   }).join('');
   const v = window.open('', '_blank');
   if(!v){ toast('⚠️ El navegador bloqueó la ventana de impresión — permitila y volvé a intentar','error'); return; }
@@ -6780,7 +6793,7 @@ function calcularEscalado(){
       const sub = getReceta(ing.rec);
       return `<tr style="background:var(--vapor)">
       <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk)">📋 <strong>${sub?sub.nombre:ing.rec}</strong> <span style="font-size:10px;color:var(--texto-2)">(preparación)</span></td>
-      <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk);text-align:right"><strong>${fmtN(cant)}</strong></td>
+      <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk);text-align:right"><strong>${fmtQ(cant,'kg')}</strong></td>
       <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk)">kg</td>
     </tr>`;
     }
@@ -6788,7 +6801,7 @@ function calcularEscalado(){
     const sinStock = ins && (Number(ins.stock)||0) < cant;
     return `<tr style="${sinStock?'background:var(--alerta-lt)':''}">
       <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk)">${ins?ins.desc:ing.ins}${sinStock?' ⚠️':''}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk);text-align:right"><strong>${fmtN(cant)}</strong></td>
+      <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk);text-align:right"><strong>${fmtQ(cant, (ins&&ins.uom))}</strong></td>
       <td style="padding:8px 10px;border-bottom:1px solid var(--miga-dk)">${ins?ins.uom:''}</td>
     </tr>`;
   }).join('');
@@ -6843,17 +6856,17 @@ function imprimirEscalado(){
       const sub = getReceta(ing.rec);
       return `<tr class="sub-rec">
         <td>📋 <strong>${sub?sub.nombre:ing.rec}</strong> <span style="font-size:10px;color:#666">(preparación)</span></td>
-        <td>${fmtN(cant)}</td><td>kg</td><td>—</td></tr>`;
+        <td>${fmtQ(cant,'kg')}</td><td>kg</td><td>—</td></tr>`;
     }
     const ins  = getInsumo(ing.ins);
     const desc = ins ? ins.desc : ing.ins;
     const uom  = ins ? ins.uom : '';
     const stockActual = ins ? (Number(ins.stock)||0) : null;
     const sinStock = stockActual !== null && stockActual < cant;
-    const stockTxt = stockActual !== null ? fmtN(stockActual)+' '+uom : '—';
+    const stockTxt = stockActual !== null ? fmtQ(stockActual, uom)+' '+uom : '—';
     return `<tr class="${sinStock?'sin-stock':''}">
       <td>${desc}${sinStock?' <strong style="color:#C0392B">⚠️ Stock insuficiente</strong>':''}</td>
-      <td>${fmtN(cant)}</td><td>${uom}</td>
+      <td>${fmtQ(cant, uom)}</td><td>${uom}</td>
       <td style="color:${sinStock?'#C0392B':'#2D6A4F'}">${stockTxt}</td></tr>`;
   }).join('');
 
@@ -6953,7 +6966,7 @@ function imprimirOrdenProduccion(nro){
   const mapa = rec ? insumosNecesariosReceta(rec, lotesO) : {};
   const filasIns = Object.entries(mapa).map(([insId, cant])=>{
     const ins = getInsumo(insId);
-    return `<tr><td>${ins?ins.desc:insId}</td><td style="text-align:right"><strong>${fmtN(cant)}</strong></td><td>${ins?ins.uom:''}</td></tr>`;
+    return `<tr><td>${ins?ins.desc:insId}</td><td style="text-align:right"><strong>${fmtQ(cant, (ins&&ins.uom))}</strong></td><td>${ins?ins.uom:''}</td></tr>`;
   }).join('');
   const filasOper = (o.operarios||[]).map(op=>`<tr><td><strong>${op.nombre}</strong></td><td>${op.tarea||'—'}</td></tr>`).join('');
   const modoTxt = o.modo==='piezas' ? 'piezas / porciones' : 'lote(s)';
@@ -7067,8 +7080,8 @@ function renderConsolidado(){
     const falta = ins && ins.stock < cant;
     return `<tr style="${falta?'background:var(--alerta-lt)':''}">
       <td>${ins?ins.desc:insId}${falta?' ⚠️':''}</td>
-      <td style="text-align:right"><strong>${fmtN(cant)}</strong> ${ins?ins.uom:''}</td>
-      <td style="text-align:right;font-size:11px;color:var(--texto-2)">stock: ${ins?fmtN(ins.stock):'?'}</td></tr>`;
+      <td style="text-align:right"><strong>${fmtQ(cant, (ins&&ins.uom))}</strong> ${ins?ins.uom:''}</td>
+      <td style="text-align:right;font-size:11px;color:var(--texto-2)">stock: ${ins?fmtQ(ins.stock, ins.uom):'?'}</td></tr>`;
   }).join('');
   body.innerHTML = `
     <h4 style="font-size:13px;color:var(--corteza);margin-bottom:6px">🏭 Órdenes del día (${ordenes.length})</h4>
@@ -7088,7 +7101,7 @@ function imprimirConsolidado(){
   const mapa = {};
   ordenes.forEach(o=>{ const rec=getReceta(o.recetaId); if(rec) insumosNecesariosReceta(rec, o.lotes||o.unidades, mapa); });
   const filasOrd = ordenes.map(o=>`<tr><td>${o.nro}</td><td><strong>${o.producto}</strong></td><td>${fmtN(o.unidades)} ${o.modo==='piezas'?'pzas/porc.':'lote(s)'}</td><td>${o.hora||''} ${o.turno||''}</td><td>${(o.operarios||[]).map(x=>x.nombre+(x.tarea?' ('+x.tarea+')':'')).join(', ')||'—'}</td></tr>`).join('');
-  const filasIns = Object.entries(mapa).map(([insId,cant])=>{ const ins=getInsumo(insId); return `<tr><td>${ins?ins.desc:insId}</td><td style="text-align:right"><strong>${fmtN(cant)}</strong></td><td>${ins?ins.uom:''}</td></tr>`; }).join('');
+  const filasIns = Object.entries(mapa).map(([insId,cant])=>{ const ins=getInsumo(insId); return `<tr><td>${ins?ins.desc:insId}</td><td style="text-align:right"><strong>${fmtQ(cant, (ins&&ins.uom))}</strong></td><td>${ins?ins.uom:''}</td></tr>`; }).join('');
   const v = window.open('', '_blank');
   if(!v){ toast('⚠️ El navegador bloqueó la ventana de impresión','error'); return; }
   v.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Consolidado de Producción</title>
@@ -7220,7 +7233,7 @@ function renderRemitos(){
     return;
   }
   tbody.innerHTML = DB.remitos.map(r=>{
-    const detalle = r.items.map(it=>`${it.desc} (${fmtN(it.cantidad)} ${it.uom})`).join(', ');
+    const detalle = r.items.map(it=>`${it.desc} (${fmtQ(it.cantidad, it.uom)} ${it.uom})`).join(', ');
     return `<tr>
       <td><span class="mono">${r.nro}</span></td>
       <td>${r.fecha.split('-').reverse().join('/')}</td>
@@ -7422,10 +7435,10 @@ function avanzarEstadoPedidoCompartido(id){
     impacto.items.forEach(it=>{
       if(it.tipo==='inventario'){
         const ins=DB.inventario.find(i=>i.desc.toLowerCase()===it.item.toLowerCase());
-        if(ins){const disp=ins.stock-(ins.reservado||0); if(disp<it.cantidad) problemas.push(`${ins.desc}: necesitás ${fmtN(it.cantidad)} ${ins.uom}, hay ${fmtN(disp)} disponibles`);}
+        if(ins){const disp=ins.stock-(ins.reservado||0); if(disp<it.cantidad) problemas.push(`${ins.desc}: necesitás ${fmtQ(it.cantidad, ins.uom)} ${ins.uom}, hay ${fmtQ(disp, ins.uom)} disponibles`);}
       } else if(it.tipo==='catalogo'){
         const prod=DB.catalogoProductos.find(c=>c.id===it.catalogoId);
-        if(prod?.recetaId){const rec=getReceta(prod.recetaId); if(rec) rec.ingredientes.forEach(ing=>{const ins=getInsumo(ing.ins); if(ins){const nec=ing.qty*it.cantidad,disp=ins.stock-(ins.reservado||0); if(disp<nec) problemas.push(`${ins.desc} (para ${prod.nombre}): necesitás ${fmtN(nec)} ${ins.uom}, hay ${fmtN(disp)}`);} });}
+        if(prod?.recetaId){const rec=getReceta(prod.recetaId); if(rec) rec.ingredientes.forEach(ing=>{const ins=getInsumo(ing.ins); if(ins){const nec=ing.qty*it.cantidad,disp=ins.stock-(ins.reservado||0); if(disp<nec) problemas.push(`${ins.desc} (para ${prod.nombre}): necesitás ${fmtQ(nec, ins.uom)} ${ins.uom}, hay ${fmtN(disp)}`);} });}
       }
     });
     if(problemas.length>0&&!confirm(`⚠️ Stock insuficiente:\n\n${problemas.join('\n')}\n\n¿Reservar de todas formas?`)) return;
@@ -7642,7 +7655,7 @@ function enviarWhatsAppRemito(nro){
   const r = DB.remitos.find(x=>x.nro===nro);
   if(!r) return;
 
-  const detalle = r.items.map(it=>`• ${it.desc}: ${fmtN(it.cantidad)} ${it.uom}`).join('\n');
+  const detalle = r.items.map(it=>`• ${it.desc}: ${fmtQ(it.cantidad, it.uom)} ${it.uom}`).join('\n');
   const urlMovil = URL_RECEPCION_MOVIL.includes('PEGAR_AQUI')
     ? ''
     : `\n\n📲 Confirmar recepción acá:\n${URL_RECEPCION_MOVIL}?remito=${encodeURIComponent(r.nro)}`;
@@ -7711,7 +7724,7 @@ function imprimirRemito(nro){
       <table>
         <thead><tr><th>#</th><th>Descripción</th><th>Cantidad</th><th>Unidad</th></tr></thead>
         <tbody>
-          ${r.items.map((it,i)=>`<tr><td>${i+1}</td><td>${it.desc}</td><td>${fmtN(it.cantidad)}</td><td>${it.uom}</td></tr>`).join('')}
+          ${r.items.map((it,i)=>`<tr><td>${i+1}</td><td>${it.desc}</td><td>${fmtQ(it.cantidad, it.uom)}</td><td>${it.uom}</td></tr>`).join('')}
         </tbody>
         <tfoot><tr><td colspan="2" style="font-weight:700;text-align:right">Total de ítems</td><td style="font-weight:700">${totalItems}</td><td></td></tr></tfoot>
       </table>
@@ -7893,7 +7906,7 @@ function confirmarEliminacionRemito(){
   const r = DB.remitos.find(x=>x.nro===remitoEnAccion);
   if(!r) return;
 
-  const detalle = r.items.map(it=>`${it.desc}: ${fmtN(it.cantidad)} ${it.uom}`).join(', ');
+  const detalle = r.items.map(it=>`${it.desc}: ${fmtQ(it.cantidad, it.uom)} ${it.uom}`).join(', ');
   DB.remitos = DB.remitos.filter(x=>x.nro!==remitoEnAccion);
 
   registrarAuditoria('Eliminación', `Remito ${r.nro}`,
@@ -8052,7 +8065,7 @@ function filtrarSugerenciasIng(input){
       onmouseover="this.style.background='var(--trigo-lt)'" onmouseout="this.style.background='#fff'"
       style="padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--miga-dk)">
       <strong>${i.desc}</strong>
-      <span style="color:var(--texto-2);font-size:11px"> · ${i.uom} · stock: ${fmtN(i.stock)} · ${fmt$(i.precio)}</span>
+      <span style="color:var(--texto-2);font-size:11px"> · ${i.uom} · stock: ${fmtQ(i.stock, i.uom)} · ${fmt$(i.precio)}</span>
     </div>`).join('') +
   matchesRec.map(rc=>`
     <div onclick="elegirSugerenciaIng(this,'REC:${rc.id}')"
@@ -8814,7 +8827,7 @@ function confirmarEdicionOrden(){
   if(pasaAEjecutada){
     const chequeo = verificarStockOrden(rec, nuevosLotes);
     if(!chequeo.ok){
-      const detalle = chequeo.faltantes.map(f=>`• ${f.desc}: necesita ${fmtN(f.necesario)} ${f.uom}, hay ${fmtN(f.disponible)} ${f.uom} (faltan ${fmtN(f.faltante)} ${f.uom})`).join('\n');
+      const detalle = chequeo.faltantes.map(f=>`• ${f.desc}: necesita ${fmtQ(f.necesario, f.uom)} ${f.uom}, hay ${fmtQ(f.disponible, f.uom)} ${f.uom} (faltan ${fmtQ(f.faltante, f.uom)} ${f.uom})`).join('\n');
       alert(`🚫 No se puede marcar como "Ejecutada": el stock no alcanza.\n\n${detalle}\n\nElegí otro estado o reducí las unidades.`);
       return;
     }
@@ -8982,7 +8995,7 @@ function guardarMateriaPrima(){
     DB.inventario.push({id,desc,cat:cat||'Otros',uom,stock:cantidad,min:smin||0,max:smax||cantidad*3,precio:sinIVA,estado:'Activo'});
   }
 
-  registrarAuditoria('Creación', `Materia Prima ${id} — ${desc}`, `Ingreso de ${fmtN(cantidad)} ${uom} · Proveedor: ${proveedor} · Lote: ${lote||'—'}`);
+  registrarAuditoria('Creación', `Materia Prima ${id} — ${desc}`, `Ingreso de ${fmtQ(cantidad, uom)} ${uom} · Proveedor: ${proveedor} · Lote: ${lote||'—'}`);
   cerrarModal('modal-materia');
   toast(`✅ ${desc} registrado · Stock actualizado`,'success');
   tomarSnapshotCostos();
@@ -9130,7 +9143,7 @@ function guardarEdicionMateriaPrima(){
     if(nuevoDecomiso && descontarStock && !r.decomiso){
       const antes = ins.stock;
       ins.stock = Math.max(0, +(ins.stock - nuevaCantidad).toFixed(4));
-      cambios.push(`Stock descontado: ${fmtN(antes)} → ${fmtN(ins.stock)} ${ins.uom}`);
+      cambios.push(`Stock descontado: ${fmtQ(antes, ins.uom)} → ${fmtQ(ins.stock, ins.uom)} ${ins.uom}`);
     }
   }
 
@@ -9505,9 +9518,9 @@ function previsualizarReceta(){
     if(!stockOK) hayFaltante=true;
     return `<div class="ingrediente-row">
       <span>${ins.desc}</span>
-      <span style="color:var(--texto-2);font-size:11px">${fmtN(necesario)} ${ins.uom}</span>
+      <span style="color:var(--texto-2);font-size:11px">${fmtQ(necesario, ins.uom)} ${ins.uom}</span>
       <span class="${stockOK?'ing-stock-ok':'ing-stock-warn'}">
-        ${stockOK?'✅':'⚠️'} Stock: ${fmtN(ins.stock)} ${ins.uom}${stockOK?'':` · Faltan ${fmtN(faltante)} ${ins.uom}`}
+        ${stockOK?'✅':'⚠️'} Stock: ${fmtQ(ins.stock, ins.uom)} ${ins.uom}${stockOK?'':` · Faltan ${fmtQ(faltante, ins.uom)} ${ins.uom}`}
       </span>
       <span style="font-weight:600;font-size:12px">${fmt$(costo)}</span>
     </div>`;
@@ -9560,7 +9573,7 @@ function guardarOrdenProduccion(){
   const chequeo = verificarStockOrden(rec, lotes);
 
   if(estado==='Ejecutada' && !chequeo.ok){
-    const detalle = chequeo.faltantes.map(f=>`• ${f.desc}: necesita ${fmtN(f.necesario)} ${f.uom}, hay ${fmtN(f.disponible)} ${f.uom} (faltan ${fmtN(f.faltante)} ${f.uom})`).join('\n');
+    const detalle = chequeo.faltantes.map(f=>`• ${f.desc}: necesita ${fmtQ(f.necesario, f.uom)} ${f.uom}, hay ${fmtQ(f.disponible, f.uom)} ${f.uom} (faltan ${fmtQ(f.faltante, f.uom)} ${f.uom})`).join('\n');
     alert(`🚫 No se puede ejecutar esta orden: el stock no alcanza.\n\n${detalle}\n\nGuardá la orden como "Planificada" o "En proceso" hasta reponer estos insumos, o reducí la cantidad.`);
     return;
   }
@@ -9614,7 +9627,7 @@ function cargarSwapIngredientes(){
   if(!rec){ selIng.innerHTML = '<option value="">—</option>'; return; }
   const insumosDeReceta = (rec.ingredientes||[]).filter(ing=>ing.ins).map(ing=>{
     const ins = getInsumo(ing.ins);
-    return ins ? `<option value="${ing.ins}">${ins.desc} (${fmtN(ing.qty)} ${ins.uom} · ${fmt$(ins.precio)})</option>` : '';
+    return ins ? `<option value="${ing.ins}">${ins.desc} (${fmtQ(ing.qty, ins.uom)} ${ins.uom} · ${fmt$(ins.precio)})</option>` : '';
   }).join('');
   selIng.innerHTML = '<option value="">Elegir ingrediente…</option>' + insumosDeReceta;
   document.getElementById('swap-resultado').innerHTML = '<div class="empty-state"><div class="es-icon">🔁</div><h4>Ahora elegí el ingrediente a reemplazar</h4><p></p></div>';
@@ -9661,7 +9674,7 @@ function calcularSwap(){
 
   out.innerHTML = `
     <div style="background:${mejora?'var(--vapor)':'var(--alerta-lt)'};border-radius:10px;padding:14px 16px">
-      <div style="font-size:13px;margin-bottom:6px"><strong>${actual.desc}</strong> → <strong>${alt.desc}</strong> · ${fmtN(qty)} ${actual.uom} en la fórmula</div>
+      <div style="font-size:13px;margin-bottom:6px"><strong>${actual.desc}</strong> → <strong>${alt.desc}</strong> · ${fmtQ(qty, actual.uom)} ${actual.uom} en la fórmula</div>
       <div style="display:flex;flex-wrap:wrap;gap:10px 26px;align-items:center">
         <div><div style="font-size:10px;font-weight:700;color:var(--texto-2);text-transform:uppercase">Costo lote actual</div>
           <div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700">${fmt$(costoActual)}</div></div>
@@ -9689,7 +9702,7 @@ function cargarSimulacion(){
     const costoActual = ins ? ins.precio*ing.qty : 0;
     return `<tr>
       <td>${ins?ins.desc:'?'}</td>
-      <td>${fmtN(ing.qty)} ${ins?ins.uom:''}</td>
+      <td>${fmtQ(ing.qty, (ins&&ins.uom))} ${ins?ins.uom:''}</td>
       <td>${fmt$(costoActual)}</td>
       <td><input type="number" step="0.001" min="0" value="${ing.qty}" data-ins="${ing.ins}" data-precio="${ins?ins.precio:0}" class="sim-qty-input"
         style="width:90px;padding:6px 8px;border:1.5px solid var(--borde);border-radius:6px;font-size:12px" oninput="recalcularSimulacion()"></td>
@@ -9812,7 +9825,7 @@ function renderOrdenCompra(){
         <tbody>
           ${pedidos.map(p=>`<tr style="border-bottom:1px solid var(--borde)">
             <td style="padding:8px 10px;font-size:13px">${p.insDesc}</td>
-            <td style="padding:8px 10px;font-size:13px">${fmtN(p.cantidad)} ${p.uom}</td>
+            <td style="padding:8px 10px;font-size:13px">${fmtQ(p.cantidad, p.uom)} ${p.uom}</td>
             <td style="padding:8px 10px;font-size:13px">${fmt$(p.precioUnit)}</td>
             <td style="padding:8px 10px;font-size:13px;text-align:right">${fmt$(p.total)}</td>
           </tr>`).join('')}
@@ -10342,7 +10355,7 @@ function _hpRenderDetalle(datos){
       <td>${r.proveedor}</td>
       <td><span class="mono">${r.lote||'—'}</span></td>
       <td>${vtoFmt}</td>
-      <td>${fmtN(r.cantidad)}</td>
+      <td>${fmtQ(r.cantidad, r.uom)}</td>
       <td>${fmt$(r.sinIVA)}</td>
       <td>${r.ivaPct}%</td>
       <td><strong>${fmt$(r.conIVA)}</strong></td>
@@ -10631,7 +10644,7 @@ function generarReportePDF(){
   const pendientes = DB.pedidos.filter(p=>p.estado==='Pendiente'||p.estado==='En camino');
 
   const filasInventario = DB.inventario.map(i=>`
-    <tr><td>${i.id}</td><td>${i.desc}</td><td>${i.cat}</td><td>${fmtN(i.stock)} ${i.uom}</td><td>${fmt$(i.precio)}</td><td>${fmt$(i.stock*i.precio)}</td></tr>
+    <tr><td>${i.id}</td><td>${i.desc}</td><td>${i.cat}</td><td>${fmtQ(i.stock, i.uom)} ${i.uom}</td><td>${fmt$(i.precio)}</td><td>${fmt$(i.stock*i.precio)}</td></tr>
   `).join('');
 
   const filasRecetas = DB.recetas.map(r=>`
@@ -12640,7 +12653,7 @@ function despacharPedidoRepartidor(id){
             const necesario = ing.qty * it.cantidad;
             const disponible = ins.stock - (ins.reservado||0);
             if(disponible < necesario)
-              problemas.push(`${ins.desc}: necesitás ${fmtN(necesario)} ${ins.uom}, hay ${fmtN(disponible)}`);
+              problemas.push(`${ins.desc}: necesitás ${fmtQ(necesario, ins.uom)} ${ins.uom}, hay ${fmtQ(disponible, ins.uom)}`);
           }
         });
       }
@@ -16153,7 +16166,7 @@ function kxAbrirPrecioRapido(insId){
   document.getElementById('kx-pr-info').innerHTML = `
     <div>Precio actual: <strong>${fmt$(ins.precio)}</strong> sin IVA por ${kxEsc(ins.uom||'unidad')}</div>
     <div>Última actualización: <strong>${ult?kxFechaFmt(ult.fecha):'sin registro'}</strong>${dias!==null?` (hace ${dias} días)`:''}${ult&&ult.proveedor?` · ${kxEsc(ult.proveedor)}`:''}</div>
-    <div>Stock: <strong>${fmtN(ins.stock)} ${kxEsc(ins.uom||'')}</strong></div>`;
+    <div>Stock: <strong>${fmtQ(ins.stock, ins.uom)} ${kxEsc(ins.uom||'')}</strong></div>`;
   const selP = document.getElementById('kx-pr-proveedor');
   selP.innerHTML = '<option value="">Seleccionar…</option>' +
     DB.proveedores.filter(p=>p.estado==='Activo').map(p=>`<option ${ult&&p.razon===ult.proveedor?'selected':''}>${kxEsc(p.razon)}</option>`).join('');
@@ -16267,8 +16280,8 @@ function kxRenderReponer(){
     <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th><th></th></tr></thead><tbody>` +
     reponer.map(i=>`<tr style="cursor:pointer" onclick="kxAbrirReponer('${kxEsc(i.id)}')" title="Actualizar stock de ${kxEsc(i.desc)}">
       <td><strong>${kxEsc(i.desc)}</strong></td>
-      <td style="color:var(--alerta);font-weight:700">${fmtN(i.stock)} ${kxEsc(i.uom||'')}</td>
-      <td>${fmtN(i.min)} ${kxEsc(i.uom||'')}</td>
+      <td style="color:var(--alerta);font-weight:700">${fmtQ(i.stock, i.uom)} ${kxEsc(i.uom||'')}</td>
+      <td>${fmtQ(i.min, i.uom)} ${kxEsc(i.uom||'')}</td>
       <td><span class="kx-precio-btn" style="background:var(--trigo-lt);border:1px solid var(--trigo);color:var(--trigo-dk);white-space:nowrap">✏️ Actualizar</span></td>
     </tr>`).join('') + '</tbody></table></div>';
 }
@@ -16281,8 +16294,8 @@ function kxAbrirReponer(insId){
   document.getElementById('kx-rp-insid').value = ins.id;
   document.getElementById('kx-rp-titulo').textContent = ins.desc;
   document.getElementById('kx-rp-info').innerHTML = `
-    <div>Stock en sistema: <strong style="color:var(--alerta)">${fmtN(ins.stock)} ${kxEsc(ins.uom||'')}</strong> · Mínimo: <strong>${fmtN(ins.min)}</strong>${Number(ins.max)>0?` · Máximo: <strong>${fmtN(ins.max)}</strong>`:''}</div>
-    <div>Cantidad sugerida para reponer: <strong>${fmtN(sug)} ${kxEsc(ins.uom||'')}</strong></div>
+    <div>Stock en sistema: <strong style="color:var(--alerta)">${fmtQ(ins.stock, ins.uom)} ${kxEsc(ins.uom||'')}</strong> · Mínimo: <strong>${fmtN(ins.min)}</strong>${Number(ins.max)>0?` · Máximo: <strong>${fmtN(ins.max)}</strong>`:''}</div>
+    <div>Cantidad sugerida para reponer: <strong>${fmtQ(sug, ins.uom)} ${kxEsc(ins.uom||'')}</strong></div>
     <div>Última compra: <strong>${ult?kxFechaFmt(ult.fecha):'sin registro'}</strong>${ult&&ult.proveedor?` · ${kxEsc(ult.proveedor)}`:''} · ${fmt$(ins.precio)} sin IVA</div>`;
   const puede = p => !usuarioActual || tienePermisoPagina(p);
   document.getElementById('kx-rp-btn-ingreso').style.display = puede('materia') ? '' : 'none';
@@ -16618,10 +16631,10 @@ function kxRenderMovs(){
       <td><strong>${kxEsc(m.ds)}</strong><br><span class="mono" style="font-size:10px">${kxEsc(m.ins)} · ${kxEsc(m.id)}</span></td>
       <td>${kxBadgeTipo(m)}</td>
       <td style="font-size:12px">${kxEsc(kxOrigenTxt(m))}${m.nota?`<br><span style="font-size:11px;color:var(--texto-2)">${kxEsc(m.nota)}</span>`:''}</td>
-      <td class="${m.d>=0?'kx-pos':'kx-neg'}">${m.d>0?'+':''}${fmtN(m.d)} ${kxEsc((getInsumo(m.ins)||{}).uom||'')}</td>
+      <td class="${m.d>=0?'kx-pos':'kx-neg'}">${m.d>0?'+':''}${fmtQ(m.d, (getInsumo(m.ins)||{}).uom)} ${kxEsc((getInsumo(m.ins)||{}).uom||'')}</td>
       <td>${fmt$(m.cu)}</td>
       <td><strong>${fmt$(Math.abs(m.d)*m.cu)}</strong></td>
-      <td>${fmtN(m.sd)}</td>
+      <td>${fmtQ(m.sd, (getInsumo(m.ins)||{}).uom)}</td>
       <td style="font-size:12px">${kxEsc(m.ref||'—')}</td>
       <td style="font-size:12px">${kxEsc(m.u||'—')}</td>
     </tr>`;
@@ -16712,7 +16725,7 @@ function kxMovInfo(){
   document.getElementById('kx-mv-cant-label').textContent =
     tipo==='conteo' ? 'Stock contado físicamente *' : tipo==='ajuste' ? 'Cantidad (+ suma, − resta) *' : 'Cantidad *';
   document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : tipo==='ingreso' ? '¿De dónde vino? (donación, devolución, traslado…) *' : 'Nota';
-  document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtN(ins.stock)} ${ins.uom||''} · $${fmtN(ins.precio)} sin IVA` : '';
+  document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtQ(ins.stock, ins.uom)} ${ins.uom||''} · $${fmtN(ins.precio)} sin IVA` : '';
   const prev = document.getElementById('kx-mv-preview');
   if(!ins || isNaN(cant)){ prev.innerHTML = 'Elegí el insumo y la cantidad para ver el efecto.'; return; }
   const d = kxCalcDeltaManual(ins, tipo, cant);
@@ -16720,9 +16733,9 @@ function kxMovInfo(){
   let extra = '';
   if(tipo==='conteo' && document.getElementById('kx-mv-inicial').checked) extra = '📋 Inventario inicial: el stock queda en lo contado y la diferencia no cuenta como pérdida ni sobrante.';
   else if(tipo==='conteo') extra = d===0 ? '✅ El conteo coincide con el sistema.'
-    : d<0 ? `⚠️ Faltan ${fmtN(-d)} ${ins.uom||''} (${fmt$(-d*ins.precio)}): pérdida no registrada.`
-    : `ℹ️ Sobran ${fmtN(d)} ${ins.uom||''} respecto al sistema.`;
-  prev.innerHTML = `Stock: <strong>${fmtN(ins.stock)}</strong> → <strong>${fmtN(sd)}</strong> ${ins.uom||''} ·
+    : d<0 ? `⚠️ Faltan ${fmtQ(-d, ins.uom)} ${ins.uom||''} (${fmt$(-d*ins.precio)}): pérdida no registrada.`
+    : `ℹ️ Sobran ${fmtQ(d, ins.uom)} ${ins.uom||''} respecto al sistema.`;
+  prev.innerHTML = `Stock: <strong>${fmtQ(ins.stock, ins.uom)}</strong> → <strong>${fmtQ(sd, ins.uom)}</strong> ${ins.uom||''} ·
     Movimiento: <span class="${d>=0?'kx-pos':'kx-neg'}">${d>0?'+':''}${fmtN(d)}</span> ·
     Valor: <strong>${fmt$(Math.abs(d)*(Number(ins.precio)||0))}</strong>${extra?'<br>'+extra:''}`;
 }
@@ -16743,7 +16756,7 @@ function kxGuardarMovManual(){
   const stockAntes = Number(ins.stock)||0;
   let d = kxCalcDeltaManual(ins, tipo, cant);
   if(stockAntes + d < 0){
-    if(!confirm(`El stock en sistema es ${fmtN(stockAntes)} ${ins.uom||''}, menor a lo que vas a descontar.\n\nEl stock quedará en 0. ¿Continuar?`)) return;
+    if(!confirm(`El stock en sistema es ${fmtQ(stockAntes, ins.uom)} ${ins.uom||''}, menor a lo que vas a descontar.\n\nEl stock quedará en 0. ¿Continuar?`)) return;
   }
   const sd = Math.max(0, +(stockAntes + d).toFixed(4));
   d = +(sd - stockAntes).toFixed(4);
@@ -16756,9 +16769,9 @@ function kxGuardarMovManual(){
   kxGuardarMovs([kxNuevoMov({fecha, ins, tipo:tipoKx, org, mot: tipo==='merma'?kxVal('kx-mv-motivo'):'', d, cu:ins.precio, sd, ref,
     nota: tipo==='conteo' ? `${esInicial?'Inventario inicial':'Conteo'}: ${fmtN(cant)} · sistema: ${fmtN(stockAntes)}${nota?' · '+nota:''}` : nota})]);
   registrarAuditoria('Modificación', `Kardex ${ins.id} — ${ins.desc}`,
-    `${esInicial?'Inventario inicial':tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':tipo==='ingreso'?'Ingreso sin factura':'Ajuste correctivo'}: ${d>0?'+':''}${fmtN(d)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
+    `${esInicial?'Inventario inicial':tipo==='conteo'?'Conteo físico':tipo==='merma'?'Merma ('+(KX_MOTIVOS[kxVal('kx-mv-motivo')]||'')+')':tipo==='egreso'?'Egreso manual':tipo==='ingreso'?'Ingreso sin factura':'Ajuste correctivo'}: ${d>0?'+':''}${fmtQ(d, ins.uom)} ${ins.uom||''} · Stock ${fmtN(stockAntes)} → ${fmtN(sd)}${ref?' · Ref: '+ref:''}${nota?' · '+nota:''}`);
   cerrarModal('kx-modal-mov');
-  toast(`✅ Movimiento registrado · ${ins.desc}: ${fmtN(stockAntes)} → ${fmtN(sd)} ${ins.uom||''}`,'success');
+  toast(`✅ Movimiento registrado · ${ins.desc}: ${fmtQ(stockAntes, ins.uom)} → ${fmtQ(sd, ins.uom)} ${ins.uom||''}`,'success');
   if(document.getElementById('page-kardex')?.classList.contains('active')) kxRender();
   try{ renderInventario(); }catch(_){}
 }
@@ -17224,7 +17237,7 @@ function kxRenderInforme(){
         <thead><tr><th>#</th><th>Insumo</th><th>Categoría</th><th>Cantidad perdida</th><th>Valor perdido</th><th>% de su consumo</th></tr></thead>
         <tbody>${inf.ranking.length ? inf.ranking.map((r,i)=>`<tr>
           <td><strong>${i+1}</strong></td><td><strong>${kxEsc(r.desc)}</strong></td><td>${kxEsc(r.cat)}</td>
-          <td>${fmtN(r.perd)} ${kxEsc(r.uom)}</td><td class="kx-neg">${fmt$(r.perdV)}</td>
+          <td>${fmtQ(r.perd, r.uom)} ${kxEsc(r.uom)}</td><td class="kx-neg">${fmt$(r.perdV)}</td>
           <td>${r.realV>0?(r.perdV/r.realV*100).toFixed(1)+'%':'—'}</td></tr>`).join('')
           : '<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--texto-2)">Sin pérdidas registradas este mes ✅</td></tr>'}</tbody>
       </table></div></div>
@@ -17307,7 +17320,7 @@ function kxImprimirInforme(){
   <h2>Consumo por categoría</h2><table><tr><th>Categoría</th><th class="r">Consumo</th><th class="r">Pérdida</th></tr>
   ${inf.categorias.map(c=>`<tr><td>${kxEsc(c.cat)}</td><td class="r">${fmt$(c.realV)}</td><td class="r neg">${c.perdV?fmt$(c.perdV):'—'}</td></tr>`).join('')}</table>
   <h2>Top 10 pérdidas</h2>${GR.ranking?`<div class="g">${GR.ranking}</div>`:''}<table><tr><th>#</th><th>Insumo</th><th class="r">Cantidad</th><th class="r">Valor</th></tr>
-  ${inf.ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${kxEsc(r.desc)}</td><td class="r">${fmtN(r.perd)} ${kxEsc(r.uom)}</td><td class="r neg">${fmt$(r.perdV)}</td></tr>`).join('')||'<tr><td colspan="4">Sin pérdidas registradas</td></tr>'}</table>
+  ${inf.ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${kxEsc(r.desc)}</td><td class="r">${fmtQ(r.perd, r.uom)} ${kxEsc(r.uom)}</td><td class="r neg">${fmt$(r.perdV)}</td></tr>`).join('')||'<tr><td colspan="4">Sin pérdidas registradas</td></tr>'}</table>
   <h2>Detalle por insumo</h2><table><tr><th>Insumo</th><th class="r">Inicial</th><th class="r">Compras</th><th class="r">Recetas</th><th class="r">Mermas</th><th class="r">Dif. inv.</th><th class="r">Final</th><th class="r">Consumo $</th></tr>
   ${inf.filas.map(r=>`<tr><td>${kxEsc(r.desc)} <span style="color:#888">${kxEsc(r.uom)}</span></td><td class="r">${fmtN(r.si)}</td><td class="r">${fmtN(r.ing)}</td><td class="r">${fmtN(r.egr)}</td><td class="r">${fmtN(r.mer)}</td><td class="r">${fmtN(r.ajP-r.ajN)}</td><td class="r">${fmtN(r.sf)}</td><td class="r">${fmt$(r.realV)}</td></tr>`).join('')}</table>
   </body></html>`;
@@ -17414,7 +17427,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '38.5';
+const BELEN_BUILD = '38.6';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -17620,7 +17633,7 @@ function bfSugerirNombre(){
   const q = kxVal('bf-a-nombre').trim().toLowerCase();
   if(kxVal('bf-a-id') || q.length < 3){ box.innerHTML=''; return; }
   const sim = (DB.bienes||[]).filter(b=>String(b.nombre||'').toLowerCase().includes(q)).slice(0,4);
-  box.innerHTML = sim.length ? '⚠️ Ya cargados: ' + sim.map(b=>`<b>${kxEsc(b.nombre)}${b.medida?' '+kxEsc(b.medida):''}</b> (${kxEsc(b.sector)}: ${fmtN(b.cant)} ${kxEsc(b.uom||'')})`).join(' · ') : '';
+  box.innerHTML = sim.length ? '⚠️ Ya cargados: ' + sim.map(b=>`<b>${kxEsc(b.nombre)}${b.medida?' '+kxEsc(b.medida):''}</b> (${kxEsc(b.sector)}: ${fmtQ(b.cant, b.uom)} ${kxEsc(b.uom||'')})`).join(' · ') : '';
 }
 // ── Interfaz ─────────────────────────────────────────────────────
 (function bfInyectarUI(){
@@ -17902,13 +17915,13 @@ function bfGuardarArticulo(otro){
     const rep  = d.tipo==='consumible' ? 0 : Math.min(cant, Math.max(0, Math.round(Number(kxVal('bf-a-rep'))||0)));
     if(kxVal('bf-a-cant')==='' || cant < 0){ toast('⚠️ Ingresá la cantidad actual (puede ser 0)','error'); return; }
     const dup = (DB.bienes||[]).find(b=>b.nombre.trim().toLowerCase()===d.nombre.toLowerCase() && (b.sector||'').toLowerCase()===d.sector.toLowerCase() && (b.medida||'').toLowerCase()===d.medida.toLowerCase());
-    if(dup && !confirm(`Ya existe "${dup.nombre}${dup.medida?' '+dup.medida:''}" en ${dup.sector} con ${fmtN(dup.cant)} ${dup.uom}.\n\nSi llegaron más, conviene registrar un ingreso en ese artículo.\n¿Crear otro artículo igual de todos modos?`)) return;
+    if(dup && !confirm(`Ya existe "${dup.nombre}${dup.medida?' '+dup.medida:''}" en ${dup.sector} con ${fmtQ(dup.cant, dup.uom)} ${dup.uom}.\n\nSi llegaron más, conviene registrar un ingreso en ese artículo.\n¿Crear otro artículo igual de todos modos?`)) return;
     const b = { id: bfNuevoId(), ...d, cant, rep, alta: kxHoy(), _ts: Date.now() };
     DB.bienes.push(b);
     try{ encolarCambio('bienes','upsert',{id:b.id}); }catch(_){}
     bfRegistrarMov(b, { tipo:'alta', d:cant, nota: rep ? `${rep} a reparar` : '' });
-    registrarAuditoria('Creación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Alta: ${fmtN(cant)} ${b.uom} en ${b.sector} (${b.cat})`);
-    toast(`✅ ${b.nombre} cargado · ${fmtN(cant)} ${b.uom} en ${b.sector}`,'success');
+    registrarAuditoria('Creación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Alta: ${fmtQ(cant, b.uom)} ${b.uom} en ${b.sector} (${b.cat})`);
+    toast(`✅ ${b.nombre} cargado · ${fmtQ(cant, b.uom)} ${b.uom} en ${b.sector}`,'success');
     if(otro){
       bfAbrirArticulo(null, { cat:d.cat, tipo:d.tipo, sector:d.sector });
     } else cerrarModal('bf-modal-art');
@@ -17922,7 +17935,7 @@ function bfEliminarArticulo(){
   const motivo = prompt('Motivo de la eliminación (queda en Auditoría):'); if(!motivo) return;
   DB.bienes = DB.bienes.filter(x=>x.id!==b.id);
   try{ encolarCambio('bienes','delete',{id:b.id}); }catch(_){}
-  registrarAuditoria('Eliminación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Eliminado (${fmtN(b.cant)} ${b.uom} en ${b.sector}). Motivo: ${motivo}`);
+  registrarAuditoria('Eliminación', `Inventario fábrica ${b.id} — ${b.nombre}`, `Eliminado (${fmtQ(b.cant, b.uom)} ${b.uom} en ${b.sector}). Motivo: ${motivo}`);
   cerrarModal('bf-modal-art'); toast('🗑️ Artículo eliminado','success'); bfRender();
 }
 
@@ -17936,7 +17949,7 @@ function bfAbrirMov(id, tipoPre){
   document.getElementById('bf-mv-tipo').value = tipoPre && tipos.includes(tipoPre) ? tipoPre : tipos[0];
   document.getElementById('bf-mv-id').value = b.id;
   document.getElementById('bf-mv-titulo').textContent = `${bfIcono(b.cat)} ${b.nombre}${b.medida?' · '+b.medida:''}`;
-  document.getElementById('bf-mv-info').innerHTML = `Sector: <strong>${kxEsc(b.sector)}</strong> · Hay: <strong>${fmtN(b.cant)} ${kxEsc(b.uom)}</strong>
+  document.getElementById('bf-mv-info').innerHTML = `Sector: <strong>${kxEsc(b.sector)}</strong> · Hay: <strong>${fmtQ(b.cant, b.uom)} ${kxEsc(b.uom)}</strong>
     ${cons ? (Number(b.min)>0?` · Mínimo: ${fmtN(b.min)}`:'') : ` · En uso: <strong>${fmtN((b.cant||0)-(b.rep||0))}</strong> · A reparar: <strong>${fmtN(b.rep||0)}</strong>`}
     <br><a href="#" onclick="event.preventDefault();cerrarModal('bf-modal-mov');bfAbrirArticulo('${kxEsc(b.id)}')" style="color:var(--trigo-dk);font-size:11px">✏️ Editar datos del artículo</a>`;
   ['bf-mv-cant','bf-mv-rep','bf-mv-hacia','bf-mv-vu','bf-mv-nota'].forEach(x=>document.getElementById(x).value='');
@@ -17949,11 +17962,11 @@ function bfCalcMov(b, tipo, cant, repCont){
   const c0 = Number(b.cant)||0, r0 = Number(b.rep)||0;
   let c = c0, r = r0, d = 0, err = '';
   if(tipo==='ingreso'){ d = cant; c = c0 + cant; }
-  else if(tipo==='consumo' || tipo==='baja'){ if(cant > c0) err = `Solo hay ${fmtN(c0)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
+  else if(tipo==='consumo' || tipo==='baja'){ if(cant > c0) err = `Solo hay ${fmtQ(c0, b.uom)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
   else if(tipo==='conteo'){ c = cant; d = +(cant - c0).toFixed(3); r = b.tipo==='consumible' ? 0 : Math.min(c, Math.max(0, Math.round(repCont==null||isNaN(repCont) ? r0 : repCont))); }
   else if(tipo==='reparar'){ if(cant > c0 - r0) err = `Solo hay ${fmtN(c0-r0)} en uso.`; d = Math.min(cant, c0-r0); r = r0 + d; }
   else if(tipo==='reparado'){ if(cant > r0) err = `Solo hay ${fmtN(r0)} a reparar.`; d = Math.min(cant, r0); r = r0 - d; }
-  else if(tipo==='traslado'){ if(cant > c0) err = `Solo hay ${fmtN(c0)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
+  else if(tipo==='traslado'){ if(cant > c0) err = `Solo hay ${fmtQ(c0, b.uom)} ${b.uom}.`; d = -Math.min(cant, c0); c = c0 + d; r = Math.min(r0, c); }
   return { c:bfNum(c), r:bfNum(r), d:bfNum(d), err };
 }
 function bfMovUI(soloPreview){
@@ -17975,7 +17988,7 @@ function bfMovUI(soloPreview){
   const repTxt = kxVal('bf-mv-rep');
   const x = bfCalcMov(b, tipo, cant, repTxt==='' ? null : parseFloat(repTxt));
   prev.innerHTML = (x.err ? `<span style="color:var(--alerta);font-weight:700">⚠️ ${x.err}</span><br>` : '') +
-    `Queda: <strong>${fmtN(x.c)} ${kxEsc(b.uom)}</strong>${b.tipo!=='consumible' ? ` · en uso ${fmtN(x.c-x.r)} · a reparar ${fmtN(x.r)}` : ''}` +
+    `Queda: <strong>${fmtQ(x.c, b.uom)} ${kxEsc(b.uom)}</strong>${b.tipo!=='consumible' ? ` · en uso ${fmtN(x.c-x.r)} · a reparar ${fmtN(x.r)}` : ''}` +
     (tipo==='conteo' ? `<br>${x.d===0?'✅ Coincide con lo registrado.':x.d<0?`⚠️ Faltan ${fmtN(-x.d)} respecto a lo registrado.`:`ℹ️ Aparecieron ${fmtN(x.d)} más de lo registrado.`}` : '') +
     (b.tipo==='consumible' && Number(b.min)>0 && x.c<=b.min ? `<br><span style="color:var(--alerta)">⚠️ Queda en el mínimo o por debajo: hay que reponer.</span>` : '');
 }
@@ -18015,7 +18028,7 @@ function bfGuardarMov(){
     bfTocar(dest);
     bfRegistrarMov(dest, { tipo:'traslado', fecha, d: mover, hacia: dest.sector, nota: `Viene de ${b.sector}${nota?' · '+nota:''}` });
   }
-  const txt = `${BF_TIPOS_MOV[tipo]}: ${x.d>0?'+':''}${fmtN(x.d)} ${b.uom}${tipo==='baja'?' ('+(BF_MOTIVOS_BAJA[kxVal('bf-mv-mot')]||'')+')':''}${hacia?' → '+hacia:''} · Quedan ${fmtN(b.cant)}${b.tipo!=='consumible'?` (a reparar ${fmtN(b.rep)})`:''}`;
+  const txt = `${BF_TIPOS_MOV[tipo]}: ${x.d>0?'+':''}${fmtQ(x.d, b.uom)} ${b.uom}${tipo==='baja'?' ('+(BF_MOTIVOS_BAJA[kxVal('bf-mv-mot')]||'')+')':''}${hacia?' → '+hacia:''} · Quedan ${fmtN(b.cant)}${b.tipo!=='consumible'?` (a reparar ${fmtN(b.rep)})`:''}`;
   registrarAuditoria('Modificación', `Inventario fábrica ${b.id} — ${b.nombre} (${b.sector})`, txt + (nota?' · '+nota:''));
   cerrarModal('bf-modal-mov');
   toast(`✅ ${b.nombre}: ${txt}`,'success');
@@ -18039,7 +18052,7 @@ function bfRenderMovs(){
     const det = [m.tipo==='baja' ? (BF_MOTIVOS_BAJA[m.mot]||m.mot) : '', m.tipo==='traslado' && m.d<0 ? '→ '+m.hacia : '', m.vu>0 ? fmt$(m.vu)+' c/u' : '', m.nota].filter(Boolean).join(' · ');
     return `<tr><td>${kxFechaFmt(m.f)}</td><td><strong>${kxEsc(m.nb)}</strong><br><span class="bf-tipo">${kxEsc(m.sector||'')}</span></td>
       <td>${BF_TIPOS_MOV[m.tipo]||m.tipo}</td>
-      <td class="${m.d<0?'kx-neg':m.d>0?'kx-pos':''}">${m.tipo==='reparar'||m.tipo==='reparado'?fmtN(m.d):(m.d>0?'+':'')+fmtN(m.d)} ${kxEsc(b?b.uom:'')}</td>
+      <td class="${m.d<0?'kx-neg':m.d>0?'kx-pos':''}">${m.tipo==='reparar'||m.tipo==='reparado'?fmtN(m.d):(m.d>0?'+':'')+fmtQ(m.d, (b&&b.uom))} ${kxEsc(b?b.uom:'')}</td>
       <td>${fmtN(m.res)}</td><td style="font-size:11px;max-width:280px">${kxEsc(det)||'—'}</td><td style="font-size:11px">${kxEsc(m.u)}</td></tr>`;
   }).join('') + (L.length>300?`<tr><td colspan="7" style="text-align:center;font-size:11px;color:var(--texto-2)">Mostrando 300 de ${L.length}. Usá el CSV para ver todo.</td></tr>`:'')
   : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--texto-2)">Sin movimientos en este período</td></tr>';
@@ -18077,7 +18090,7 @@ function bfRenderResumen(){
     <div class="dash-grid">
       <div class="card"><div class="card-header"><h3>🧽 Consumo de limpieza — ${kxMesNombre(mes)}</h3></div><div class="table-wrap"><table>
         <thead><tr><th>Artículo</th><th>Cantidad</th><th>Valor</th></tr></thead>
-        <tbody>${Object.values(consumos).length ? Object.values(consumos).sort((a,b)=>b.v-a.v || b.q-a.q).map(r=>`<tr><td>${kxEsc(r.nb)}</td><td>${fmtN(r.q)} ${kxEsc(r.uom)}</td><td>${r.v?fmt$(r.v):'—'}</td></tr>`).join('')
+        <tbody>${Object.values(consumos).length ? Object.values(consumos).sort((a,b)=>b.v-a.v || b.q-a.q).map(r=>`<tr><td>${kxEsc(r.nb)}</td><td>${fmtQ(r.q, r.uom)} ${kxEsc(r.uom)}</td><td>${r.v?fmt$(r.v):'—'}</td></tr>`).join('')
           + `<tr style="font-weight:700;background:var(--miga-dk)"><td colspan="2">Total</td><td>${fmt$(Object.values(consumos).reduce((s,r)=>s+r.v,0))}</td></tr>`
           : '<tr><td colspan="3" style="text-align:center;color:var(--texto-2);padding:14px">Sin consumos registrados</td></tr>'}</tbody></table></div></div>
       <div class="card"><div class="card-header"><h3>🗑️ Bajas y faltantes — ${kxMesNombre(mes)}</h3></div><div class="table-wrap"><table>
@@ -18121,7 +18134,7 @@ function bfImprimirPlanilla(){
     <tr><th>Categoría</th><th>Artículo</th><th>Medida</th><th class="n">En sistema</th><th class="c">Contado</th><th class="c">A reparar</th><th class="o">Observaciones</th></tr>
     ${porSector[s].sort((a,b)=>(a.cat||'').localeCompare(b.cat||'') || (a.nombre||'').localeCompare(b.nombre||'')).map(b=>`<tr>
       <td>${bfIcono(b.cat)} ${kxEsc(b.cat)}</td><td><strong>${kxEsc(b.nombre)}</strong></td><td>${kxEsc(b.medida||'')}</td>
-      <td class="n">${fmtN(b.cant)} ${kxEsc(b.uom)}</td><td></td><td>${b.tipo==='consumible'?'<span style="color:#bbb">—</span>':''}</td><td></td></tr>`).join('')}
+      <td class="n">${fmtQ(b.cant, b.uom)} ${kxEsc(b.uom)}</td><td></td><td>${b.tipo==='consumible'?'<span style="color:#bbb">—</span>':''}</td><td></td></tr>`).join('')}
     <tr><td colspan="7" style="color:#999;font-size:9.5px">Artículos encontrados que no están en la lista: _____________________________________________</td></tr></table>`).join('')}
   </body></html>`;
   const w = window.open('','_blank');
@@ -18869,7 +18882,7 @@ function kxUnificarInsumos(B, A, motivo){
   DB.inventario = DB.inventario.filter(i=>i.id!==B);
   kxRegistrarEliminado('inventario', B, b.desc, Infinity);
   registrarAuditoria('Eliminación', `Insumo ${B} — ${b.desc}`,
-    `Unificado en ${A} — ${a.desc}. Motivo: "${motivo||'duplicado'}". Stock traspasado: ${fmtN(stockB)} ${b.uom||''} (queda ${fmtN(a.stock)}). `+
+    `Unificado en ${A} — ${a.desc}. Motivo: "${motivo||'duplicado'}". Stock traspasado: ${fmtQ(stockB, b.uom)} ${b.uom||''} (queda ${fmtQ(a.stock, a.uom)}). `+
     `Movidos: ${refs.mp.length} ingresos, ${refs.movs.length} movimientos, ${refs.recetas.length} recetas, ${refs.pedidos.length} pedidos, ${refs.otros.length} otros, ${refs.cierres.length} cierres.`);
   try{ encolarCambio('inventario','upsert',a); }catch(_){}
   guardarEnStorage(); _kxSnap = kxFoto();
@@ -18907,7 +18920,7 @@ function kxDupModal(){
 }
 function kxDupOpciones(sel, excluir){
   return [...(DB.inventario||[])].filter(i=>i.id!==excluir).sort((a,b)=>String(a.desc).localeCompare(String(b.desc)))
-    .map(i=>`<option value="${kxDupEsc(i.id)}" ${i.id===sel?'selected':''}>${kxDupEsc(i.desc)} · ${kxDupEsc(i.id)} · ${fmtN(Number(i.stock)||0)} ${kxDupEsc(i.uom||'')}</option>`).join('');
+    .map(i=>`<option value="${kxDupEsc(i.id)}" ${i.id===sel?'selected':''}>${kxDupEsc(i.desc)} · ${kxDupEsc(i.id)} · ${fmtQ(Number(i.stock)||0, i.uom)} ${kxDupEsc(i.uom||'')}</option>`).join('');
 }
 function kxDupAbrir(origen){
   if(!kxPuedeUnificar()){ toast('⚠️ Solo Dueño, Administrador o Programador pueden unificar o eliminar insumos','error'); return; }
@@ -18943,7 +18956,7 @@ function kxDupTarjeta(i, rol, color){
   return `<div style="flex:1;border:2px solid ${color};border-radius:10px;padding:10px;font-size:13px">
     <div style="font-size:11px;font-weight:800;color:${color}">${rol}</div>
     <div style="font-weight:700;margin:4px 0">${kxDupEsc(i.desc)}</div>
-    <div style="opacity:.8">${i.id} · ${kxDupEsc(i.uom||'')} · stock ${fmtN(Number(i.stock)||0)}</div>
+    <div style="opacity:.8">${i.id} · ${kxDupEsc(i.uom||'')} · stock ${fmtQ(Number(i.stock)||0, i.uom)}</div>
     <div style="opacity:.8">Proveedor: ${kxDupEsc(kxUltProveedor(i.id)||'—')}</div></div>`;
 }
 function kxDupPaso1(){
@@ -18959,7 +18972,7 @@ function kxDupPaso1(){
     <div style="background:var(--vapor,#faf5ec);border-radius:8px;padding:10px 14px;font-size:13px">
       <strong>Esto pasa a "${kxDupEsc(a.desc)}":</strong>
       <ul style="margin:6px 0 0 18px;padding:0">
-        <li>Stock: ${fmtN(Number(b.stock)||0)} ${kxDupEsc(b.uom||'')} → queda en <strong>${fmtN((Number(a.stock)||0)+(Number(b.stock)||0))} ${kxDupEsc(a.uom||'')}</strong></li>
+        <li>Stock: ${fmtQ(Number(b.stock)||0, b.uom)} ${kxDupEsc(b.uom||'')} → queda en <strong>${fmtQ((Number(a.stock)||0)+(Number(b.stock)||0), a.uom)} ${kxDupEsc(a.uom||'')}</strong></li>
         ${li(r.mp.length, `${r.mp.length} ingreso(s) de compra`)}
         ${li(r.movs.length, `${r.movs.length} movimiento(s) del kardex`)}
         ${li(r.recetas.length, `${r.recetas.length} receta(s): ${r.recetas.slice(0,6).map(x=>kxDupEsc(x.nombre||x.id)).join(', ')}${r.recetas.length>6?'…':''}`)}
@@ -19015,7 +19028,7 @@ function kxDupSoloEliminar(B){
   _kxDup={B, A:'', paso:1};
   if(r.total>0 || (Number(b.stock)||0)!==0){
     document.getElementById('kxdup-tit').textContent='No se puede eliminar solo';
-    document.getElementById('kxdup-body').innerHTML=`<p style="font-size:13px">"${kxDupEsc(b.desc)}" tiene ${fmtN(Number(b.stock)||0)} ${kxDupEsc(b.uom||'')} de stock y ${r.total} registro(s) asociados (compras, kardex, recetas u otros). Si lo borrás se pierde esa información.</p>
+    document.getElementById('kxdup-body').innerHTML=`<p style="font-size:13px">"${kxDupEsc(b.desc)}" tiene ${fmtQ(Number(b.stock)||0, b.uom)} ${kxDupEsc(b.uom||'')} de stock y ${r.total} registro(s) asociados (compras, kardex, recetas u otros). Si lo borrás se pierde esa información.</p>
       <p style="font-size:13px"><strong>Unificalo</strong> con el insumo correcto: todo lo suyo pasa al otro y después se elimina.</p>
       <div style="display:flex;justify-content:space-between;margin-top:12px"><button class="btn-secondary" onclick="kxDupInicio()">← Volver</button>
       <button class="btn-primary" onclick="_kxDup.B='${B}';kxDupInicio()">🔗 Elegir con cuál unificar</button></div>`;
@@ -19086,12 +19099,12 @@ function kxMpPaso1(){
   document.getElementById('kxdup-body').innerHTML = `
     <div style="border:2px solid var(--alerta,#c0392b);border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:12px">
       <div style="font-weight:800;font-size:15px">${kxDupEsc(r.desc)}</div>
-      <div style="opacity:.85">${kxDupEsc(r.id)} · ${fch} · ${fmtN(a.cant)} ${u} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · ${kxDupEsc(r.proveedor||'sin proveedor')}${r.lote?' · Lote '+kxDupEsc(r.lote):''}</div>
+      <div style="opacity:.85">${kxDupEsc(r.id)} · ${fch} · ${fmtQ(a.cant, u)} ${u} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · ${kxDupEsc(r.proveedor||'sin proveedor')}${r.lote?' · Lote '+kxDupEsc(r.lote):''}</div>
     </div>
     <p style="font-size:13px;margin:0 0 8px"><strong>¿Por qué lo querés eliminar?</strong></p>
     <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;font-size:13px">
       <input type="radio" name="kxmp-modo" value="error" ${_kxMp.modo==='error'?'checked':''} onchange="_kxMp.modo='error';kxMpPaso1()">
-      <span><strong>Se cargó por error</strong> — esa compra no existió o está cargada dos veces.<br><span style="opacity:.75">Se borra el ingreso y se descuentan los ${fmtN(a.cant)} ${u} del stock.</span></span></label>
+      <span><strong>Se cargó por error</strong> — esa compra no existió o está cargada dos veces.<br><span style="opacity:.75">Se borra el ingreso y se descuentan los ${fmtQ(a.cant, u)} ${u} del stock.</span></span></label>
     <label style="display:flex;gap:10px;align-items:flex-start;border:1px solid var(--borde,#e5d9c5);border-radius:8px;padding:10px;cursor:pointer;font-size:13px">
       <input type="radio" name="kxmp-modo" value="real" ${_kxMp.modo==='real'?'checked':''} onchange="_kxMp.modo='real';kxMpPaso1()">
       <span><strong>Es una compra real, pero el producto está mal escrito o duplicado</strong><br><span style="opacity:.75">No se borra la compra: se pasa, con sus kilos, al producto correcto.</span></span></label>
@@ -19103,9 +19116,9 @@ function kxMpPaso1(){
   if(_kxMp.modo==='error'){
     const li = [];
     if(!a.ins) li.push('El producto ya no está en Stock Actual: solo se borra el ingreso.');
-    else if(a.yaDescontado) li.push(`Este lote estaba marcado "A decomiso": el stock ya se había descontado, queda en ${fmtN(a.stockAntes)} ${u}.`);
-    else li.push(`Stock de "${kxDupEsc(a.ins.desc)}": ${fmtN(a.stockAntes)} → <strong>${fmtN(a.stockDespues)} ${u}</strong>`);
-    if(a.faltaStock) li.push(`⚠️ Hoy hay menos stock (${fmtN(a.stockAntes)}) que lo que dice el ingreso (${fmtN(a.cant)}): queda en 0.`);
+    else if(a.yaDescontado) li.push(`Este lote estaba marcado "A decomiso": el stock ya se había descontado, queda en ${fmtQ(a.stockAntes, u)} ${u}.`);
+    else li.push(`Stock de "${kxDupEsc(a.ins.desc)}": ${fmtQ(a.stockAntes, u)} → <strong>${fmtQ(a.stockDespues, u)} ${u}</strong>`);
+    if(a.faltaStock) li.push(`⚠️ Hoy hay menos stock (${fmtQ(a.stockAntes, u)}) que lo que dice el ingreso (${fmtQ(a.cant, u)}): queda en 0.`);
     li.push('Queda anotado en el kardex como "Corrección de ingreso" (no cuenta como pérdida).');
     if(a.borraInsumo) li.push(`Como "${kxDupEsc(a.ins.desc)}" no tiene otras compras ni se usa en recetas, <strong>también se elimina de Stock Actual</strong>.`);
     else if(a.ins && a.refs.recetas.length) li.push(`"${kxDupEsc(a.ins.desc)}" sigue existiendo porque se usa en ${a.refs.recetas.length} receta(s).`);
@@ -19142,7 +19155,7 @@ function kxMpPaso3(){
   document.getElementById('kxdup-tit').textContent = 'Paso 3 de 3 — Confirmación final';
   document.getElementById('kxdup-body').innerHTML = `
     <div style="background:#fdecea;border-radius:10px;padding:14px;font-size:14px;line-height:1.5">
-      Se va a <strong>eliminar definitivamente</strong> el ingreso de ${fmtN(a.cant)} ${kxDupEsc(r.uom||a.ins?.uom||'')} de "${kxDupEsc(r.desc)}" del ${r.fecha?r.fecha.split('-').reverse().join('/'):'—'}${a.ins&&!a.yaDescontado?`, y el stock queda en ${fmtN(a.stockDespues)}`:''}${a.borraInsumo?'. El producto también sale de Stock Actual':''}, en todas las PC.
+      Se va a <strong>eliminar definitivamente</strong> el ingreso de ${fmtQ(a.cant, r.uom)} ${kxDupEsc(r.uom||a.ins?.uom||'')} de "${kxDupEsc(r.desc)}" del ${r.fecha?r.fecha.split('-').reverse().join('/'):'—'}${a.ins&&!a.yaDescontado?`, y el stock queda en ${fmtN(a.stockDespues)}`:''}${a.borraInsumo?'. El producto también sale de Stock Actual':''}, en todas las PC.
       <br>No se deshace desde acá (solo restaurando el backup automático).</div>
     <div style="display:flex;justify-content:space-between;margin-top:14px">
       <button class="btn-secondary" onclick="cerrarModal('modal-kx-dup')">Cancelar</button>
@@ -19157,8 +19170,8 @@ function kxEliminarIngreso(r, motivo){
   try{ kxRegistrarDiferencias(antes, { fecha:kxHoy(), org:'correccion', tipo:'ingreso', ref: r.lote?'Lote '+r.lote:'',
         nota:`Ingreso del ${r.fecha||'—'} eliminado: ${motivo}` }); }catch(e){ console.warn('Kardex:', e); }
   registrarAuditoria('Eliminación', `Ingreso Materia Prima ${r.id} — ${r.desc} (${r.fecha||'—'})`,
-    `Motivo: "${motivo}". Datos eliminados: ${fmtN(a.cant)} ${r.uom||''} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · Proveedor ${r.proveedor||'—'} · Lote ${r.lote||'—'}.`+
-    (a.ins ? ` Stock ${fmtN(a.stockAntes)} → ${fmtN(a.ins.stock)}.` : '') + (a.borraInsumo ? ' El producto también se eliminó de Stock Actual.' : ''));
+    `Motivo: "${motivo}". Datos eliminados: ${fmtQ(a.cant, r.uom)} ${r.uom||''} · ${fmt$(Number(r.sinIVA)||0)} s/IVA · Proveedor ${r.proveedor||'—'} · Lote ${r.lote||'—'}.`+
+    (a.ins ? ` Stock ${fmtQ(a.stockAntes, a.ins.uom)} → ${fmtQ(a.ins.stock, a.ins.uom)}.` : '') + (a.borraInsumo ? ' El producto también se eliminó de Stock Actual.' : ''));
   if(a.borraInsumo){
     DB.inventario = DB.inventario.filter(i=>i.id!==a.ins.id);
     kxRegistrarEliminado('inventario', a.ins.id, a.ins.desc, Infinity);
@@ -19513,7 +19526,7 @@ function kxFichaEjemplo(){
   const ej = document.getElementById('kxi-ej');
   const fake = { presNombre:p.nom, presFactor:p.f };
   if(p.activa && p.nom && p.f>0){
-    ej.innerHTML = `Ejemplo: <strong>4 ${kxPlural(p.nom,4)} = ${fmtN(kxR(4*p.f))} ${uom}</strong> &nbsp;·&nbsp; y al revés: <strong>${fmtN(kxR(10*p.f))} ${uom} = 10 ${kxPlural(p.nom,10)}</strong>`;
+    ej.innerHTML = `Ejemplo: <strong>4 ${kxPlural(p.nom,4)} = ${fmtQ(kxR(4*p.f), uom)} ${uom}</strong> &nbsp;·&nbsp; y al revés: <strong>${fmtQ(kxR(10*p.f), uom)} ${uom} = 10 ${kxPlural(p.nom,10)}</strong>`;
   } else ej.textContent = p.activa ? 'Completá cuánto trae cada una para ver la conversión.' : 'Sin presentación: las compras se cargan directamente en ' + (KX_UOM_TXT[uom]||uom) + '.';
   ['min','max'].forEach(k=>{
     const v = parseFloat(kxVal('kxi-'+k))||0;
@@ -19604,7 +19617,7 @@ function kxFichaGuardar(){
     stampearRegistro(ins); ins._ts = ahora;
     DB.inventario.push(ins);
     registrarAuditoria('Creación', `Insumo ${id} — ${desc}`,
-      `Unidad ${uom} · ${cat}` + (pres.presNombre ? ` · Presentación: ${pres.presNombre} de ${fmtN(pres.presFactor)} ${uom}` : ' · Sin presentación'));
+      `Unidad ${uom} · ${cat}` + (pres.presNombre ? ` · Presentación: ${pres.presNombre} de ${fmtQ(pres.presFactor, uom)} ${uom}` : ' · Sin presentación'));
     toast(`✅ Insumo creado: ${id} — ${desc}`,'success');
   }
   try{ encolarCambio('inventario','upsert', ins); }catch(_){}
@@ -19701,7 +19714,7 @@ function kxMpLista(){
     const u = kxUltimaCompra(i.id); const p = kxPres(i);
     return `<div data-i="${i.id}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--borde,#eee)" onmousedown="event.preventDefault()" onclick="kxMpSeleccionar('${i.id}')">
       <div><span class="mono" style="font-size:11px">${i.id}</span> · <strong>${kxEsc(i.desc)}</strong> <span style="color:var(--texto-2)">(${kxEsc(i.uom||'')})</span></div>
-      <div style="font-size:11px;color:var(--texto-2)">Stock ${fmtN(i.stock)} ${kxEsc(i.uom||'')}${p?` = ${kxPresTxt(i,i.stock)}`:''}${u?` · última compra ${fmt$(u.sinIVA)} · ${kxEsc(u.proveedor||'')}`:''}</div></div>`;
+      <div style="font-size:11px;color:var(--texto-2)">Stock ${fmtQ(i.stock, i.uom)} ${kxEsc(i.uom||'')}${p?` = ${kxPresTxt(i,i.stock)}`:''}${u?` · última compra ${fmt$(u.sinIVA)} · ${kxEsc(u.proveedor||'')}`:''}</div></div>`;
   };
   const puede = kxInsPuedeEditar();
   l.innerHTML = (res.length ? res.map(fila).join('') : `<div style="padding:10px;font-size:12px;color:var(--texto-2)">No hay ningún insumo con ese nombre.</div>`)
@@ -19719,14 +19732,14 @@ function kxMpSeleccionar(id){
   if(prov && !prov.value){ const pv = ins.provHab || (u && u.proveedor) || ''; if([...prov.options].some(o=>o.value===pv)) prov.value = pv; }
   document.getElementById('kxmp-lista').style.display = 'none';
   const p = kxPres(ins); const uom = ins.uom||'';
-  document.getElementById('kxmp-chip').innerHTML = `<span style="background:#e6f4ea;border-radius:6px;padding:4px 8px;display:inline-block">✅ <span class="mono">${ins.id}</span> · stock ${fmtN(ins.stock)} ${kxEsc(uom)}${p?` (${kxPresTxt(ins,ins.stock)})`:''}${p?` · ${kxEsc(p.nom)} de ${fmtN(p.f)} ${kxEsc(uom)}`:''}</span>
+  document.getElementById('kxmp-chip').innerHTML = `<span style="background:#e6f4ea;border-radius:6px;padding:4px 8px;display:inline-block">✅ <span class="mono">${ins.id}</span> · stock ${fmtQ(ins.stock, uom)} ${kxEsc(uom)}${p?` (${kxPresTxt(ins,ins.stock)})`:''}${p?` · ${kxEsc(p.nom)} de ${fmtQ(p.f, uom)} ${kxEsc(uom)}`:''}</span>
     ${kxInsPuedeEditar()?` <a href="#" onclick="event.preventDefault();kxMpEditarFicha()" style="font-size:12px">✏️ Ficha${p?'':' · agregar presentación (ej. bolsa de 25 kg)'}</a>`:''}`;
   document.getElementById('kxmp-pres-g').style.display = p ? '' : 'none';
   document.getElementById('kxmp-pp-g').style.display = p ? '' : 'none';
   document.getElementById('kxmp-cant-lab').textContent = `Cantidad en ${KX_UOM_TXT[uom]||uom||'unidades'} *`;
   if(p){
     document.getElementById('kxmp-pres-lab').textContent = `Cantidad en ${kxPlural(p.nom,2)}`;
-    document.getElementById('kxmp-pres-hint').textContent = `1 ${p.nom.toLowerCase()} = ${fmtN(p.f)} ${uom} · podés cargar cualquiera de los dos`;
+    document.getElementById('kxmp-pres-hint').textContent = `1 ${p.nom.toLowerCase()} = ${fmtQ(p.f, uom)} ${uom} · podés cargar cualquiera de los dos`;
     document.getElementById('kxmp-pp-lab').textContent = `$ por ${p.nom.toLowerCase()} sin IVA`;
     const c = parseFloat(kxVal('mp-cantidad')); document.getElementById('kxmp-pres').value = c>0 ? kxR(c/p.f) : '';
     const s = parseFloat(kxVal('mp-siniva')); document.getElementById('kxmp-pp').value = s>0 ? kxR(s*p.f,2) : '';
@@ -19757,7 +19770,7 @@ function kxMpPrev(){
   const ins = _kxMpIns; const cant = parseFloat(kxVal('mp-cantidad'))||0; const sin = parseFloat(kxVal('mp-siniva'))||0;
   if(!ins || !(cant>0)){ box.style.display='none'; return; }
   const uom = ins.uom||''; const st = Number(ins.stock)||0; const p = kxPres(ins);
-  let h = `📦 Stock: <strong>${fmtN(st)} → ${fmtN(kxR(st+cant))} ${kxEsc(uom)}</strong>${p?` <span style="color:var(--texto-2)">(+${kxPresTxt(ins,cant)})</span>`:''}`;
+  let h = `📦 Stock: <strong>${fmtQ(st, uom)} → ${fmtQ(kxR(st+cant), uom)} ${kxEsc(uom)}</strong>${p?` <span style="color:var(--texto-2)">(+${kxPresTxt(ins,cant)})</span>`:''}`;
   const ant = Number(ins.precio)||0;
   if(sin>0){
     const v = ant>0 ? (sin-ant)/ant*100 : null;
@@ -19917,7 +19930,7 @@ function kxQpInfo(){
   _kxQpIns = kxInsumoDeTexto(kxVal('kxqp-ins'));
   const i = _kxQpIns;
   document.getElementById('kxqp-info').textContent = i
-    ? `✅ ${i.id} · stock ${fmtN(i.stock)} ${i.uom||''}${kxPres(i)?' ('+kxPresTxt(i,i.stock)+')':''} · ${fmt$(i.precio)} sin IVA por ${i.uom||'unidad'}` : '';
+    ? `✅ ${i.id} · stock ${fmtQ(i.stock, i.uom)} ${i.uom||''}${kxPres(i)?' ('+kxPresTxt(i,i.stock)+')':''} · ${fmt$(i.precio)} sin IVA por ${i.uom||'unidad'}` : '';
 }
 function kxAbrirMovimientoStock(insId){
   if(!kxInsPuedeEditar()){ toast('🔒 Tu rol solo puede ver el inventario','error'); return; }
@@ -20056,7 +20069,7 @@ function kxMvPresRefrescar(){
     const ins = kxInsumoDeTexto(kxVal('kx-mv-insumo')); const p = kxPres(ins);
     const n0 = (DB.movimientosMP||[]).length;
     const detalle = (p && kxVal('kx-mv-tipo')!=='ajuste' && (kxVal('kxmv-pres')!=='' || kxVal('kxmv-suel')!==''))
-      ? `${fmtN(parseFloat(kxVal('kxmv-pres'))||0)} ${kxPlural(p.nom, parseFloat(kxVal('kxmv-pres'))||0)} + ${fmtN(parseFloat(kxVal('kxmv-suel'))||0)} ${ins.uom||''} sueltos` : '';
+      ? `${fmtN(parseFloat(kxVal('kxmv-pres'))||0)} ${kxPlural(p.nom, parseFloat(kxVal('kxmv-pres'))||0)} + ${fmtQ(parseFloat(kxVal('kxmv-suel'))||0, ins.uom)} ${ins.uom||''} sueltos` : '';
     const r = oG.apply(this, arguments);
     try{
       const l = DB.movimientosMP||[];
@@ -20151,7 +20164,7 @@ function kxRmElegido(tr){
   const p = kxPres(i);
   const pres = tr.querySelector('.kxrm-pres'), pp = tr.querySelector('.kxrm-pp');
   pres.disabled = !p; pp.disabled = !p;
-  tr.querySelector('.kxrm-plab').textContent = p ? `${kxPlural(p.nom,2)} de ${fmtN(p.f)} ${i.uom||''}` : (i ? 'suelto' : '');
+  tr.querySelector('.kxrm-plab').textContent = p ? `${kxPlural(p.nom,2)} de ${fmtQ(p.f, i.uom)} ${i.uom||''}` : (i ? 'suelto' : '');
   tr.querySelector('.kxrm-ulab').textContent = i ? (KX_UOM_TXT[i.uom]||i.uom||'') : '';
   if(i && was !== i.id){
     const pu = tr.querySelector('.kxrm-pu');
@@ -20161,7 +20174,7 @@ function kxRmElegido(tr){
     pp.value = p && pu.value ? kxR((parseFloat(pu.value)||0)*p.f, 2) : '';
   }
   if(!p){ pres.value=''; pp.value=''; }
-  tr.querySelector('.kxrm-info').textContent = i ? `${i.id} · stock ${fmtN(i.stock)} ${i.uom||''}${p?' ('+kxPresTxt(i,i.stock)+')':''}` : (tr.querySelector('.kxrm-ins').value.trim() ? '⚠️ Elegí un insumo de la lista' : '');
+  tr.querySelector('.kxrm-info').textContent = i ? `${i.id} · stock ${fmtQ(i.stock, i.uom)} ${i.uom||''}${p?' ('+kxPresTxt(i,i.stock)+')':''}` : (tr.querySelector('.kxrm-ins').value.trim() ? '⚠️ Elegí un insumo de la lista' : '');
   kxRmCalc();
 }
 function kxRmLeer(){
@@ -20233,7 +20246,7 @@ function kxRmGuardar(){
     toast(`⚠️ Revisá ${mal.length} renglón(es): falta elegir el insumo de la lista, la cantidad o el precio`,'error'); return;
   }
   const tot = filas.reduce((s,f)=>s+f.cant*f.pu,0);
-  if(!confirm(`Se van a cargar ${filas.length} ingreso(s) del proveedor ${prov}${nro?' (remito '+nro+')':''} por ${fmt$(tot)} sin IVA.\n\n${filas.map(f=>`• ${f.ins.desc}: ${fmtN(f.cant)} ${f.ins.uom||''}${kxPres(f.ins)?' ('+kxPresTxt(f.ins,f.cant)+')':''} a ${fmt$(f.pu)}`).join('\n')}\n\n¿Confirmar?`)) return;
+  if(!confirm(`Se van a cargar ${filas.length} ingreso(s) del proveedor ${prov}${nro?' (remito '+nro+')':''} por ${fmt$(tot)} sin IVA.\n\n${filas.map(f=>`• ${f.ins.desc}: ${fmtQ(f.cant, f.ins.uom)} ${f.ins.uom||''}${kxPres(f.ins)?' ('+kxPresTxt(f.ins,f.cant)+')':''} a ${fmt$(f.pu)}`).join('\n')}\n\n¿Confirmar?`)) return;
 
   const tOrig = window.toast; const errores = []; let ok = 0;
   window.toast = toast = function(m, t){ if(t==='error') errores.push(m); };
@@ -20352,8 +20365,8 @@ window.kxRenderReponer = kxRenderReponer = function(){
   if(!reponer.length){ div.innerHTML='<div class="empty-state"><div class="es-icon">✅</div><h4>Todo en orden</h4><p>Sin alertas de stock</p></div>'; return; }
   div.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody>` +
     reponer.map(i=>`<tr><td><strong>${kxEsc(i.desc)}</strong></td>
-      <td style="color:var(--alerta);font-weight:700">${fmtN(i.stock)} ${kxEsc(i.uom||'')}${kxPres(i)?`<div style="font-size:10px;font-weight:400;color:var(--texto-2)">${kxPresTxt(i,i.stock)}</div>`:''}</td>
-      <td>${fmtN(i.min)} ${kxEsc(i.uom||'')}</td></tr>`).join('') +
+      <td style="color:var(--alerta);font-weight:700">${fmtQ(i.stock, i.uom)} ${kxEsc(i.uom||'')}${kxPres(i)?`<div style="font-size:10px;font-weight:400;color:var(--texto-2)">${kxPresTxt(i,i.stock)}</div>`:''}</td>
+      <td>${fmtQ(i.min, i.uom)} ${kxEsc(i.uom||'')}</td></tr>`).join('') +
     `</tbody></table></div><div style="font-size:11px;color:var(--texto-2);padding:6px 14px 10px">Solo información. Las compras y correcciones se cargan en <a href="#" onclick="event.preventDefault();irAPagina('materia')">Materia Prima → 📦 Cargar datos</a>.</div>`;
 };
 (function(){
@@ -20496,7 +20509,7 @@ function kxAnularElegir(insId){
         const bloq = kxFechaBloqueada(r.fecha);
         const pres = r.presCant && r.presNombre ? ` <span style="color:var(--texto-2);font-size:11px">(${fmtN(r.presCant)} ${kxEsc(kxPlural(r.presNombre, r.presCant))})</span>` : '';
         return `<tr${r.decomiso?' style="opacity:.6"':''}><td>${r.fecha?r.fecha.split('-').reverse().join('/'):'—'}</td>
-          <td><strong>${fmtN(r.cantidad)} ${kxEsc(r.uom||ins.uom||'')}</strong>${pres}</td><td>${kxEsc(r.proveedor||'—')}</td>
+          <td><strong>${fmtQ(r.cantidad, r.uom)} ${kxEsc(r.uom||ins.uom||'')}</strong>${pres}</td><td>${kxEsc(r.proveedor||'—')}</td>
           <td>${kxEsc(r.lote||'—')}</td><td>${fmt$(r.sinIVA||0)}</td>
           <td>${bloq ? '<span style="font-size:11px;color:var(--texto-2)">🔒 mes cerrado</span>'
                      : `<button class="btn-secondary" style="padding:4px 10px" onclick="kxAnularIr('${kxEsc(r.mpId)}')">Elegir</button>`}</td></tr>`;
@@ -20648,9 +20661,9 @@ function kxPpInsTabla(mapa, conEstado){
   return `<div class="table-wrap"><table style="font-size:12px"><thead><tr><th>Insumo</th><th style="text-align:right">Necesita</th><th>En presentación</th>${conEstado?'<th style="text-align:right">Hay en stock</th><th>Estado</th>':''}</tr></thead><tbody>` +
     filas.map(f=>{
       const u = f.ins?.uom||''; const hay = Number(f.ins?.stock)||0; const falta = f.nec - hay;
-      return `<tr><td>${kxEsc(f.ins?.desc||f.id)}</td><td style="text-align:right"><strong>${fmtN(kxR(f.nec))} ${kxEsc(u)}</strong></td>
+      return `<tr><td>${kxEsc(f.ins?.desc||f.id)}</td><td style="text-align:right"><strong>${fmtQ(kxR(f.nec), u)} ${kxEsc(u)}</strong></td>
         <td style="color:var(--texto-2)">${f.ins && kxPres(f.ins) ? kxPresTxt(f.ins, f.nec) : '—'}</td>
-        ${conEstado?`<td style="text-align:right">${fmtN(hay)} ${kxEsc(u)}</td><td>${falta>1e-9?`<span style="color:var(--alerta,#c0392b);font-weight:700">🔴 Faltan ${fmtN(kxR(falta))} ${kxEsc(u)}</span>`:'🟢 Alcanza'}</td>`:''}</tr>`;
+        ${conEstado?`<td style="text-align:right">${fmtQ(hay, u)} ${kxEsc(u)}</td><td>${falta>1e-9?`<span style="color:var(--alerta,#c0392b);font-weight:700">🔴 Faltan ${fmtQ(kxR(falta), u)} ${kxEsc(u)}</span>`:'🟢 Alcanza'}</td>`:''}</tr>`;
     }).join('') + '</tbody></table></div>';
 }
 function kxPpCalc(){
@@ -20699,7 +20712,7 @@ function kxPpGuardar(){
     if(kxFechaBloqueada(fecha)){ kxAvisoBloqueo(fecha); return; }
     const falt = kxPpFaltantes(kxPpMapa(filas.map(f=>({ rec:f.rec, lotes:f.conv.lotes }))));
     if(falt.length){
-      alert(`🚫 No se puede guardar el parte como "Ejecutada": con todas las recetas juntas el stock no alcanza.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtN(kxR(x.nec))} ${x.ins.uom||''}, hay ${fmtN(x.hay)} (faltan ${fmtN(kxR(x.nec-x.hay))})`).join('\n')}\n\nGuardalo como "Planificada" o "En proceso", o reducí cantidades.`);
+      alert(`🚫 No se puede guardar el parte como "Ejecutada": con todas las recetas juntas el stock no alcanza.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtQ(kxR(x.nec), x.ins.uom)} ${x.ins.uom||''}, hay ${fmtN(x.hay)} (faltan ${fmtN(kxR(x.nec-x.hay))})`).join('\n')}\n\nGuardalo como "Planificada" o "En proceso", o reducí cantidades.`);
       return;
     }
   }
@@ -20767,7 +20780,7 @@ function kxPpEjecutar(pp){
   const items = pend.map(o=>({ rec:getReceta(o.recetaId), lotes:o.lotes||o.unidades, sust:o.reemplazos||null }));
   const falt = kxPpFaltantes(kxPpMapa(items));
   if(falt.length){
-    alert(`🚫 No se puede ejecutar el parte ${pp}: el stock no alcanza para todas las órdenes.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtN(kxR(x.nec))} ${x.ins.uom||''}, hay ${fmtN(x.hay)}`).join('\n')}`);
+    alert(`🚫 No se puede ejecutar el parte ${pp}: el stock no alcanza para todas las órdenes.\n\n${falt.map(x=>`• ${x.ins.desc}: necesita ${fmtQ(kxR(x.nec), x.ins.uom)} ${x.ins.uom||''}, hay ${fmtN(x.hay)}`).join('\n')}`);
     return;
   }
   if(!confirm(`¿Marcar como ejecutadas las ${pend.length} orden(es) pendientes del parte ${pp}?\n\nSe descuenta del stock lo que usan todas las recetas.`)) return;
@@ -20815,7 +20828,7 @@ function kxPpHtml(pp){
       <td class="r">${fmtN(kxR(o.lotes||o.unidades,2))}</td><td class="blank"></td><td class="blank"></td></tr>`).join('')}</tbody></table>
     <h2>Insumos a retirar para todo el parte</h2>
     <table><thead><tr><th>Insumo</th><th class="r">Cantidad</th><th>En presentación</th><th style="width:70px">Retirado ✓</th></tr></thead><tbody>
-    ${ins.map(x=>`<tr><td>${e(x.i?.desc||x.id)}</td><td class="r"><strong>${fmtN(kxR(x.n))} ${e(x.i?.uom||'')}</strong></td><td>${x.i&&kxPres(x.i)?kxPresTxt(x.i,x.n):'—'}</td><td></td></tr>`).join('')}</tbody></table>
+    ${ins.map(x=>`<tr><td>${e(x.i?.desc||x.id)}</td><td class="r"><strong>${fmtQ(kxR(x.n), x.i?.uom)} ${e(x.i?.uom||'')}</strong></td><td>${x.i&&kxPres(x.i)?kxPresTxt(x.i,x.n):'—'}</td><td></td></tr>`).join('')}</tbody></table>
     <div style="margin-top:6px;font-size:11px;color:#6B5A4B">Costo estimado de insumos del parte: ${fmt$(costo)}</div>
     ${reemp.length?`<div style="margin-top:6px;font-size:12px"><strong>🔁 Reemplazos usados en este parte (la receta no cambia):</strong> ${reemp.map(e).join(' · ')}</div>`:''}
     <h2>Notas del turno</h2><div class="caja"></div>
@@ -20918,7 +20931,7 @@ function kxSustAbrir(id, qty, onPick){
     document.getElementById('kxsu-q').addEventListener('input', kxSustLista);
   }
   document.getElementById('kxsu-tit').textContent = `Reemplazar ${ins.desc}`;
-  document.getElementById('kxsu-info').innerHTML = `Se necesitan <strong>${fmtN(kxR(qty))} ${kxEsc(ins.uom||'')}</strong> y hay ${fmtN(ins.stock)} · precio actual ${fmt$(ins.precio)} por ${kxEsc(ins.uom||'')}.<br>
+  document.getElementById('kxsu-info').innerHTML = `Se necesitan <strong>${fmtQ(kxR(qty), ins.uom)} ${kxEsc(ins.uom||'')}</strong> y hay ${fmtQ(ins.stock, ins.uom)} · precio actual ${fmt$(ins.precio)} por ${kxEsc(ins.uom||'')}.<br>
     <span style="color:var(--texto-2)">El reemplazo vale solo para esta orden: <strong>la receta no se modifica</strong>. Se usa la misma cantidad del producto elegido.</span>`;
   document.getElementById('kxsu-q').value = '';
   kxSustLista(); abrirModal('kx-modal-sust');
@@ -20943,7 +20956,7 @@ function kxSustLista(){
       const misma = i.uom===ins.uom; const alcanza = (Number(i.stock)||0) >= s.qty;
       const d = s.qty * ((Number(i.precio)||0) - (Number(ins.precio)||0));
       return `<tr style="${misma?'':'opacity:.55'}"><td><strong>${kxEsc(i.desc)}</strong><div style="font-size:10px;color:var(--texto-2)">${i.id} · ${kxEsc(i.cat||'')}${i.cat!==ins.cat?' · <span style="color:#b9770e">⚠️ otra categoría</span>':''}</div></td>
-        <td>${alcanza?'🟢':'🟡'} ${fmtN(i.stock)} ${kxEsc(i.uom||'')}${alcanza?'':'<div style="font-size:10px;color:#b9770e">no alcanza todo</div>'}</td>
+        <td>${alcanza?'🟢':'🟡'} ${fmtQ(i.stock, i.uom)} ${kxEsc(i.uom||'')}${alcanza?'':'<div style="font-size:10px;color:#b9770e">no alcanza todo</div>'}</td>
         <td>${fmt$(i.precio)}</td><td>${misma ? kxDifHtml(d) : '<span style="font-size:11px;color:var(--texto-2)">otra unidad</span>'}</td>
         <td>${misma ? `<button class="btn-primary" style="padding:4px 10px" onclick="kxSustElegir('${i.id}')">Usar este</button>` : ''}</td></tr>`;
     }).join('') + '</tbody></table></div><div style="font-size:11px;color:var(--texto-2);margin-top:6px">Solo se pueden elegir insumos de la misma unidad, porque se usa la misma cantidad.</div>';
@@ -20965,7 +20978,7 @@ function kxSustBloque(items, map, onClick){
   return `<div style="margin-top:10px;border:1.5px solid var(--trigo,#d8b27a);border-radius:10px;padding:10px 12px;background:#fffaf1">
     <div style="font-weight:800;font-size:13px;margin-bottom:6px">🔁 Faltantes y reemplazos <span style="font-weight:400;font-size:11px;color:var(--texto-2)">(la receta no se modifica)</span></div>
     ${falt.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-top:1px dashed var(--borde,#eee)">
-      <span>🔴 <strong>${kxEsc(x.i.desc)}</strong>: faltan ${fmtN(kxR(x.n-(Number(x.i.stock)||0)))} ${kxEsc(x.i.uom||'')}</span>
+      <span>🔴 <strong>${kxEsc(x.i.desc)}</strong>: faltan ${fmtQ(kxR(x.n-(Number(x.i.stock)||0)), x.i.uom)} ${kxEsc(x.i.uom||'')}</span>
       <button type="button" class="btn-secondary" style="padding:4px 10px" onclick="${onClick}('${x.id}', ${kxR(x.n,4)})">🔁 Reemplazar</button></div>`).join('')}
     ${act.map(([a,b])=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-top:1px dashed var(--borde,#eee)">
       <span>✅ ${kxEsc(getInsumo(a)?.desc||a)} → <strong>${kxEsc(getInsumo(b)?.desc||b)}</strong></span>
@@ -21736,8 +21749,8 @@ function kxFabAplicar(){
         const td = tr.querySelector('td'); if(!td || tr.querySelector('.kx-fab-det')) return;
         const ins = getInsumo((td.textContent||'').trim()); if(!ins) return;
         const partes = Object.values(KX_FABRICAS).map(f=>{ const v = kxStockFab(ins, f.id);
-          return `<span style="${f.id===_kxFab?'font-weight:800;':''}color:${v<0?'#c0392b':f.color}">${f.nombre} ${fmtN(v)}</span>`; }).join(' · ');
-        tr.children[4]?.insertAdjacentHTML('beforeend', `<div class="kx-fab-det" style="font-size:10px;white-space:nowrap">${partes}${ver!=='TOT'?` · <span style="color:var(--texto-2)">Total ${fmtN(ins.stock)}</span>`:''}</div>`);
+          return `<span style="${f.id===_kxFab?'font-weight:800;':''}color:${v<0?'#c0392b':f.color}">${f.nombre} ${fmtQ(v, ins.uom)}</span>`; }).join(' · ');
+        tr.children[4]?.insertAdjacentHTML('beforeend', `<div class="kx-fab-det" style="font-size:10px;white-space:nowrap">${partes}${ver!=='TOT'?` · <span style="color:var(--texto-2)">Total ${fmtQ(ins.stock, ins.uom)}</span>`:''}</div>`);
       });
     }catch(e){ console.warn('v37 inventario:', e); }
     return r;
@@ -21815,7 +21828,7 @@ function kxFabSelect(id, valor, onch){
         const mono = tr.querySelector('td .mono'); if(!mono) return;
         const id = (mono.textContent.split('·')[1]||'').trim(); const m = porId[id]; if(!m) return;
         tr.children[0]?.insertAdjacentHTML('beforeend', '<br>' + kxFabTag(kxDepDe(m)));
-        if(m.sdDep!=null && tr.children[7]) tr.children[7].insertAdjacentHTML('beforeend', `<div style="font-size:10px;color:var(--texto-2)">${kxFabNombre(kxDepDe(m))}: ${fmtN(m.sdDep)}</div>`);
+        if(m.sdDep!=null && tr.children[7]) tr.children[7].insertAdjacentHTML('beforeend', `<div style="font-size:10px;color:var(--texto-2)">${kxFabNombre(kxDepDe(m))}: ${fmtQ(m.sdDep, (getInsumo(m.ins)||{}).uom)}</div>`);
       });
     }catch(e){ console.warn('v37.1 kardex:', e); }
     return r;
@@ -22007,7 +22020,7 @@ function kxReconciliarStock(origen){
     arreglos.forEach(a=>{
       try{
         registrarAuditoria('Modificación', `Stock ${a.ins.id} — ${a.ins.desc}`,
-          `Recuperado tras carga simultánea en otra PC (${origen||'sincronización'}): ${fmtN(a.antes)} → ${fmtN(a.despues)} ${a.ins.uom||''} · ` +
+          `Recuperado tras carga simultánea en otra PC (${origen||'sincronización'}): ${fmtQ(a.antes, a.ins.uom)} → ${fmtQ(a.despues, a.ins.uom)} ${a.ins.uom||''} · ` +
           a.movs.map(m=>`${m.d>0?'+':''}${fmtN(m.d)} (${m.tipo}${m.dep?' · '+(typeof kxFabNombre==='function'?kxFabNombre(m.dep):m.dep):''} · ${m.u||'—'})`).join(' · '));
       }catch(_){}
     });
@@ -22183,7 +22196,7 @@ function kxTrLista(vista){
       lista.map(t=>`<tr><td class="mono">${kxEsc(t.id)}</td>
         <td style="white-space:nowrap"><span style="color:${F[t.origen].color};font-weight:800">${F[t.origen].nombre}</span> → <span style="color:${F[t.destino].color};font-weight:800">${F[t.destino].nombre}</span></td>
         <td>${est(t)}</td>
-        <td>${t.items.map(i=>`${kxEsc(i.desc)}: ${fmtN(i.recibida ?? i.enviada ?? i.pedida)} ${kxEsc(i.uom||'')}`).join('<br>')}</td>
+        <td>${t.items.map(i=>`${kxEsc(i.desc)}: ${fmtQ(i.recibida ?? i.enviada ?? i.pedida, i.uom)} ${kxEsc(i.uom||'')}`).join('<br>')}</td>
         <td style="font-size:11px">${[t.pidio&&('📝 '+t.pidio+' '+(t.fPedido||'')), t.envio&&('🚚 '+t.envio+' '+(t.fEnvio||'')), t.recibio&&('📥 '+t.recibio+' '+(t.fRecep||''))].filter(Boolean).map(kxEsc).join('<br>')}</td>
         <td style="white-space:nowrap">${acc(t)}</td></tr>`).join('')}</tbody></table></div>`}`;
 }
@@ -22216,7 +22229,7 @@ function kxTrFila(it, k){
   const ins = it.ins ? getInsumo(it.ins) : null;
   return `<tr data-k="${k}">
     <td><input class="kxtr-ins" list="kxtr-dl" style="${st}" ${fijo?'readonly':''} value="${ins?kxEsc(ins.desc+' ('+ins.id+')'):''}" oninput="kxTrRefrescarFilas()"></td>
-    ${m==='recibir'?`<td>${fmtN(it.enviada)} ${kxEsc(it.uom||'')}</td>`:''}${m==='envio'?`<td>${fmtN(it.pedida)} ${kxEsc(it.uom||'')}</td>`:''}
+    ${m==='recibir'?`<td>${fmtQ(it.enviada, it.uom)} ${kxEsc(it.uom||'')}</td>`:''}${m==='envio'?`<td>${fmtQ(it.pedida, it.uom)} ${kxEsc(it.uom||'')}</td>`:''}
     <td><input class="kxtr-q" type="number" min="0" step="0.001" style="${st};font-weight:700" value="${val}" oninput="kxTrRefrescarFilas()"></td>
     <td class="kxtr-pres" style="font-size:11px;color:var(--texto-2)"></td><td class="kxtr-so"></td><td class="kxtr-sd"></td>
     <td>${fijo?'':'<button class="btn-secondary" style="padding:2px 8px" onclick="this.closest(\'tr\').remove();kxTrRefrescarFilas()">✕</button>'}</td></tr>`;
@@ -22233,11 +22246,11 @@ function kxTrRefrescarFilas(){
     const i = x.ins;
     x.tr.querySelector('.kxtr-pres').textContent = i && kxPres(i) && x.q ? kxPresTxt(i, x.q) : '';
     const so = i ? kxStockFab(i, F.origen) : null, sd = i ? kxStockFab(i, F.destino) : null;
-    x.tr.querySelector('.kxtr-so').innerHTML = i ? `${fmtN(so)} ${kxEsc(i.uom||'')}` : '—';
-    x.tr.querySelector('.kxtr-sd').innerHTML = i ? `${fmtN(sd)} ${kxEsc(i.uom||'')}` : '—';
+    x.tr.querySelector('.kxtr-so').innerHTML = i ? `${fmtQ(so, i.uom)} ${kxEsc(i.uom||'')}` : '—';
+    x.tr.querySelector('.kxtr-sd').innerHTML = i ? `${fmtQ(sd, i.uom)} ${kxEsc(i.uom||'')}` : '—';
     const falta = i && (F.modo==='enviar' || F.modo==='envio') && x.q > so + 1e-9;
     x.tr.style.background = falta ? '#fdecea' : '';
-    if(falta) aviso.push(`🔴 ${i.desc}: en ${kxFabNombre(F.origen)} hay ${fmtN(so)} ${i.uom||''}`);
+    if(falta) aviso.push(`🔴 ${i.desc}: en ${kxFabNombre(F.origen)} hay ${fmtQ(so, i.uom)} ${i.uom||''}`);
     if(x.txt && !i) aviso.push('⚠️ Elegí los insumos de la lista');
   });
   document.getElementById('kxtr-aviso').innerHTML = [...new Set(aviso)].map(a=>`<div style="color:#c0392b;font-weight:700">${kxEsc(a)}</div>`).join('');
@@ -22261,7 +22274,7 @@ function kxTrConfirmar(){
       const falta = it.find(x=>x.q > kxStockFab(x.ins, F.origen) + 1e-9);
       if(falta){ toast(`⚠️ No alcanza ${falta.ins.desc} en ${kxFabNombre(F.origen)}`,'error'); return; }
       if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
-      if(!confirm(`Se va a descontar de Fábrica ${kxFabNombre(F.origen)}:\n\n${it.map(x=>`• ${x.ins.desc}: ${fmtN(x.q)} ${x.ins.uom||''}`).join('\n')}\n\nQueda "en camino" hasta que ${kxFabNombre(F.destino)} lo reciba. ¿Confirmar?`)) return;
+      if(!confirm(`Se va a descontar de Fábrica ${kxFabNombre(F.origen)}:\n\n${it.map(x=>`• ${x.ins.desc}: ${fmtQ(x.q, x.ins.uom)} ${x.ins.uom||''}`).join('\n')}\n\nQueda "en camino" hasta que ${kxFabNombre(F.destino)} lo reciba. ¿Confirmar?`)) return;
     }
     const t = { id:kxTrNuevoId(), origen:F.origen, destino:F.destino, obs, _ts:ahora,
       items: it.map(x=>({ ins:x.ins.id, desc:x.ins.desc, uom:x.ins.uom, pedida: F.modo==='pedir' ? x.q : null, enviada: F.modo==='enviar' ? x.q : null })),
@@ -22270,7 +22283,7 @@ function kxTrConfirmar(){
     else { t.envio = kxTrQuien(); t.fEnvio = `${hoy.split('-').reverse().join('/')} ${hora}`;
       kxTrAplicar(F.origen, t.items.map(i=>({ ins:i.ins, q:i.enviada })), -1, { tipo:'traslado', org:'traslado', ref:t.id, nota:`Envío a ${kxFabNombre(F.destino)}` }); }
     DB.traslados.push(t);
-    registrarAuditoria('Creación', `Traslado ${t.id}`, `${F.modo==='pedir'?'Pedido':'Envío sin pedido'} ${kxFabNombre(t.origen)} → ${kxFabNombre(t.destino)} · ${t.items.map(i=>`${i.desc} ${fmtN(i.pedida??i.enviada)} ${i.uom||''}`).join(' · ')}`);
+    registrarAuditoria('Creación', `Traslado ${t.id}`, `${F.modo==='pedir'?'Pedido':'Envío sin pedido'} ${kxFabNombre(t.origen)} → ${kxFabNombre(t.destino)} · ${t.items.map(i=>`${i.desc} ${fmtQ(i.pedida??i.enviada, i.uom)} ${i.uom||''}`).join(' · ')}`);
     toast(F.modo==='pedir' ? `📝 Pedido ${t.id} enviado a ${kxFabNombre(t.origen)}` : `🚚 ${t.id} en camino a ${kxFabNombre(t.destino)}`,'success');
     guardarEnStorage(); kxTrBadge(); kxTrLista('pend');
     if(F.modo==='enviar' && confirm('¿Imprimir el remito para que viaje con la mercadería?')) kxTrImprimir(t.id);
@@ -22466,7 +22479,7 @@ function kxInfFabRender(){
 function kxControlesFab(){
   const alertas = [];
   (DB.inventario||[]).forEach(ins=>{
-    Object.values(KX_FABRICAS).forEach(F=>{ const v = kxStockFab(ins, F.id); if(v < -1e-6) alertas.push(`🔴 ${ins.desc}: stock negativo en ${F.nombre} (${fmtN(v)} ${ins.uom||''}). Suele pasar si se cargó en la fábrica equivocada; conviene hacer un conteo.`); });
+    Object.values(KX_FABRICAS).forEach(F=>{ const v = kxStockFab(ins, F.id); if(v < -1e-6) alertas.push(`🔴 ${ins.desc}: stock negativo en ${F.nombre} (${fmtQ(v, ins.uom)} ${ins.uom||''}). Suele pasar si se cargó en la fábrica equivocada; conviene hacer un conteo.`); });
   });
   const enCamino = (DB.traslados||[]).filter(t=>t.estado==='Enviado' && !t.borrado);
   const viejos = enCamino.filter(t=>(Date.now() - (t._ts||0)) > 2*86400000);
@@ -22677,7 +22690,7 @@ function kxRestaurarFab(){
   const cambios = c.filas.map(f=>{ const i = getInsumo(f.ins); return i ? { ins:f.ins, desc:f.desc, uom:f.uom, actual:kxStockFab(i, fab), objetivo:f.sf } : null; })
     .filter(x=>x && Math.abs(x.actual - x.objetivo) > 1e-6);
   if(!cambios.length){ toast('ℹ️ El stock de esta fábrica ya coincide con la foto del cierre','success'); return; }
-  const lista = cambios.slice(0,15).map(x=>`• ${x.desc}: ${fmtN(x.actual)} → ${fmtN(x.objetivo)} ${x.uom}`).join('\n') + (cambios.length>15?`\n… y ${cambios.length-15} más`:'');
+  const lista = cambios.slice(0,15).map(x=>`• ${x.desc}: ${fmtQ(x.actual, x.uom)} → ${fmtQ(x.objetivo, x.uom)} ${x.uom}`).join('\n') + (cambios.length>15?`\n… y ${cambios.length-15} más`:'');
   const txt = prompt(`⚠️ RESTAURAR Fábrica ${kxFabNombre(fab)} al cierre de ${p}\n\nEl stock de ${cambios.length} insumo(s) vuelve al de la foto. Todo lo cargado después en esta fábrica queda en el Kardex, pero el stock se corrige con un ajuste.\n\n${lista}\n\nSe hace un backup completo antes. Para confirmar escribí RESTAURAR:`);
   if(txt===null) return;
   if(txt.trim().toUpperCase()!=='RESTAURAR'){ toast('Cancelado: no se escribió RESTAURAR','error'); return; }
@@ -22851,7 +22864,7 @@ function kxImpPrev(){
     h += `<div style="border:2px solid ${F.color};border-radius:10px;margin-bottom:12px;overflow:hidden"><div style="background:${F.color};color:#fff;padding:6px 12px;font-weight:800">🏭 Fábrica ${F.nombre} · ${vc.length} insumo(s) contados${plan.reset?` · ${ce.length} quedan en 0`:''}</div>
       <div class="table-wrap" style="max-height:38vh;overflow:auto"><table style="font-size:12px"><thead><tr><th>Insumo</th><th>Sectores (encargado)</th><th style="text-align:right">En sistema</th><th style="text-align:right">Contado</th><th style="text-align:right">Diferencia</th></tr></thead><tbody>
       ${l.map(x=>{ const d = +(x.objetivo - x.actual).toFixed(4); return `<tr style="${x.cero?'background:#fafafa;color:#888':''}"><td><strong>${kxEsc(x.desc)}</strong></td><td style="font-size:11px">${kxEsc(x.sectores.join(' · '))}${x.venc?` · <span style="color:#b9770e">vencido/roto aparte: ${fmtN(x.venc)}</span>`:''}</td>
-        <td style="text-align:right">${fmtN(x.actual)} ${kxEsc(x.uom||'')}</td><td style="text-align:right;font-weight:800">${fmtN(x.objetivo)}</td>
+        <td style="text-align:right">${fmtQ(x.actual, x.uom)} ${kxEsc(x.uom||'')}</td><td style="text-align:right;font-weight:800">${fmtN(x.objetivo)}</td>
         <td style="text-align:right;font-weight:700;color:${Math.abs(d)<1e-9?'var(--texto-2)':d>0?'#1e8449':'#c0392b'}">${Math.abs(d)<1e-9?'=':(d>0?'+':'')+fmtN(d)}</td></tr>`; }).join('')}</tbody></table></div></div>`;
   });
   if(!Object.keys(plan.cambios).length && !pend.length) h += '<div class="empty-state"><h4>El archivo no tiene renglones válidos</h4></div>';
@@ -23066,7 +23079,7 @@ function kxCompRender(){
     `<div class="table-wrap" style="margin-top:10px"><table style="font-size:12px"><thead><tr><th>Insumo compartido</th><th>Se usa</th><th style="text-align:right">Kg de masa entre cambios</th><th style="text-align:right">Costo por kg de masa</th><th>Recetas</th><th>Último cambio</th><th></th></tr></thead><tbody>${
       l.map(c=>{ const ins = getInsumo(c.ins); const u = ult(c);
         return `<tr><td><strong>${kxEsc(c.nombre)}</strong><div style="font-size:10px;color:var(--texto-2)">${kxEsc(ins?ins.desc:'⚠️ insumo no encontrado')} · ${fmt$(ins?ins.precio:0)} por ${kxEsc(ins?ins.uom:'')}</div></td>
-          <td>${fmtN(c.cantidad)} ${kxEsc(ins?ins.uom:'')} cada ${fmtN(c.dias)} días</td>
+          <td>${fmtQ(c.cantidad, (ins&&ins.uom))} ${kxEsc(ins?ins.uom:'')} cada ${fmtN(c.dias)} días</td>
           <td style="text-align:right">${fmtN(c.kgPeriodo)} kg</td><td style="text-align:right;font-weight:800">${fmt$(kxCompCostoKg(c))}</td>
           <td>${(c.recetas||[]).length}</td><td style="font-size:11px">${u?`${u.fecha.split('-').reverse().join('/')} · ${kxEsc(kxFabNombre(u.fab))}`:'—'}</td>
           <td style="white-space:nowrap"><button class="btn-primary" style="padding:4px 9px" onclick="kxCompEvento('${c.id}')">🫗 Registrar cambio</button>
@@ -23111,7 +23124,7 @@ function kxCompForm(id){
       <button class="btn-secondary" onclick="kxCompRender()">Volver</button><button class="btn-primary" onclick="kxCompGuardar('${c?c.id:''}')">✅ Guardar</button></div>`;
   const calc = ()=>{ const ins = getInsumo(kxVal('kxc-ins')); const cant = parseFloat(kxVal('kxc-cant'))||0, kg = parseFloat(kxVal('kxc-kg'))||0;
     document.getElementById('kxc-calc').innerHTML = ins && cant && kg
-      ? `🧮 ${fmtN(cant)} ${kxEsc(ins.uom||'')} × ${fmt$(ins.precio)} = <strong>${fmt$(cant*ins.precio)}</strong> por cambio ÷ ${fmtN(kg)} kg = <strong>${fmt$(cant*ins.precio/kg)} por kg de masa</strong> · ${fmtN(+(cant/kg).toFixed(3))} ${kxEsc(ins.uom||'')} por kg`
+      ? `🧮 ${fmtQ(cant, ins.uom)} ${kxEsc(ins.uom||'')} × ${fmt$(ins.precio)} = <strong>${fmt$(cant*ins.precio)}</strong> por cambio ÷ ${fmtN(kg)} kg = <strong>${fmt$(cant*ins.precio/kg)} por kg de masa</strong> · ${fmtQ(+(cant/kg).toFixed(3), ins.uom)} ${kxEsc(ins.uom||'')} por kg`
       : 'Completá insumo, cantidad y kg para ver el costo por kilo.'; };
   ['kxc-ins','kxc-cant','kxc-kg'].forEach(i=>{ const e = document.getElementById(i); e.addEventListener('input', calc); e.addEventListener('change', calc); });
   document.getElementById('kxc-busca').addEventListener('input', e=>{ const q = e.target.value.toLowerCase(); document.querySelectorAll('.kxc-rec').forEach(l=>{ l.style.display = l.dataset.n.includes(q) ? '' : 'none'; }); });
@@ -23151,17 +23164,17 @@ function kxCompEvento(id){
   if(!_kxFab){ toast('⚠️ Primero elegí la fábrica','error'); return; }
   const ins = getInsumo(c.ins); if(!ins){ toast('⚠️ El insumo de este compartido ya no existe','error'); return; }
   const hay = kxStockFab(ins, _kxFab);
-  const v = prompt(`🫗 Registrar cambio de "${c.nombre}" en Fábrica ${kxFabNombre(_kxFab)}\n\nHay ${fmtN(hay)} ${ins.uom||''} de ${ins.desc} en esta fábrica.\n¿Cuánto se usó en este cambio?`, String(c.cantidad));
+  const v = prompt(`🫗 Registrar cambio de "${c.nombre}" en Fábrica ${kxFabNombre(_kxFab)}\n\nHay ${fmtQ(hay, ins.uom)} ${ins.uom||''} de ${ins.desc} en esta fábrica.\n¿Cuánto se usó en este cambio?`, String(c.cantidad));
   if(v===null) return;
   const cant = kxNum(v);
   if(!(cant>0)){ toast('⚠️ Cantidad inválida','error'); return; }
   const hoy = kxHoy(); if(kxFechaBloqueada(hoy)){ kxAvisoBloqueo(hoy); return; }
-  if(cant > hay + 1e-9 && !confirm(`En Fábrica ${kxFabNombre(_kxFab)} figuran ${fmtN(hay)} ${ins.uom||''} y vas a descontar ${fmtN(cant)}. El stock quedará en 0. ¿Seguir?`)) return;
+  if(cant > hay + 1e-9 && !confirm(`En Fábrica ${kxFabNombre(_kxFab)} figuran ${fmtQ(hay, ins.uom)} ${ins.uom||''} y vas a descontar ${fmtN(cant)}. El stock quedará en 0. ¿Seguir?`)) return;
   const ref = 'CA-' + Date.now().toString(36).toUpperCase().slice(-6);
   kxCompAplicar(_kxFab, c.ins, cant, { fecha: hoy, tipo:'egreso', org:'compartido', ref, nota:`Cambio de ${c.nombre}` });
   DB.eventosCompartidos.push({ id: ref, comp: c.id, ins: c.ins, cantidad: cant, fecha: hoy, fab: _kxFab, por: usuarioActual.nombre, _ts: Date.now() });
-  registrarAuditoria('Modificación', `Cambio ${ref} — ${c.nombre}`, `${fmtN(cant)} ${ins.uom||''} en Fábrica ${kxFabNombre(_kxFab)}`);
-  guardarEnStorage(); toast(`🫗 Cambio registrado: −${fmtN(cant)} ${ins.uom||''} de ${ins.desc} en ${kxFabNombre(_kxFab)}`,'success');
+  registrarAuditoria('Modificación', `Cambio ${ref} — ${c.nombre}`, `${fmtQ(cant, ins.uom)} ${ins.uom||''} en Fábrica ${kxFabNombre(_kxFab)}`);
+  guardarEnStorage(); toast(`🫗 Cambio registrado: −${fmtQ(cant, ins.uom)} ${ins.uom||''} de ${ins.desc} en ${kxFabNombre(_kxFab)}`,'success');
   try{ if(document.getElementById('kx-modal-comp')?.classList.contains('open')) kxCompRender(); }catch(_){}
 }
 // ─── Real vs estimado: kg de masa procesados entre un cambio y el siguiente ───
@@ -23241,7 +23254,7 @@ function kxFilasSecciones(r, calc, costoMasa){
         cod = ing.rec; nom = s ? '📋 '+s.nombre : '?'; uom = 'kg'; pu = s && kg>0 ? calcCostoReceta(s,1)/kg : 0; }
       else { const i = getInsumo(ing.ins); cod = ing.ins; nom = i ? i.desc : '?'; uom = i ? i.uom : ''; pu = i ? Number(i.precio)||0 : 0; }
       filas += `<tr><td><span class="mono">${cod}</span></td><td>${nom}<div style="font-size:10px;color:var(--texto-2)">${(Number(ing.qty)||0).toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad × ${fmtN(Math.round(und||0))}</div></td>
-        <td>${fmtN(+q.toFixed(3))}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
+        <td>${fmtQ(+q.toFixed(3), uom)}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
     });
     return `<tr><td colspan="7" style="background:var(--miga,#f6efe3);font-weight:800;font-size:11px;letter-spacing:.5px;padding:6px 14px">${titulo}</td></tr>` + filas;
   };
@@ -23368,7 +23381,7 @@ function kxCostoSeccLote(lista){
         else { const i = getInsumo(ing.ins); cod = ing.ins; nom = i ? i.desc : '?'; uom = i ? i.uom : ''; pu = i ? Number(i.precio)||0 : 0; }
         const qu = Number(ing.qty)||0, q = lote ? qu : qu*(und||0);
         const det = lote ? (und>0 ? `por lote · ${(qu/und).toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad` : 'por lote') : `${qu.toLocaleString('es-AR',{maximumFractionDigits:4})} ${uom} por unidad × ${fmtN(Math.round(und||0))}`;
-        return `<tr><td><span class="mono">${cod}</span></td><td>${nom}<div style="font-size:10px;color:var(--texto-2)">${det}</div></td><td>${fmtN(+q.toFixed(3))}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
+        return `<tr><td><span class="mono">${cod}</span></td><td>${nom}<div style="font-size:10px;color:var(--texto-2)">${det}</div></td><td>${fmtQ(+q.toFixed(3), uom)}</td><td>${uom?uomTag(uom):'—'}</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
       }).join('');
     };
     return `<tr style="background:var(--miga-dk)"><td colspan="5" style="padding:8px 14px;font-weight:700;font-size:11px;color:var(--corteza)">Subtotal masa</td><td style="padding:8px 14px;font-weight:700">${fmt$(costoMasa)}</td><td></td></tr>`
