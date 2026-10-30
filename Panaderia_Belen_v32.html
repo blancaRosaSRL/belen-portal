@@ -4337,8 +4337,8 @@ function fmt$(n){
 function fmtN(n){
   const v = Number(n);
   if(!isFinite(v)) return '0';
-  // v38.5: hasta 3 decimales (gramos cuando la unidad es kg, ml cuando es litro)
-  return v.toLocaleString('es-AR', {maximumFractionDigits: 3});
+  // v38.7: vuelve a 2 decimales (precios, %, factores). Los pesos en kg/Lt usan fmtQ (3 decimales fijos)
+  return v.toLocaleString('es-AR', {maximumFractionDigits: 2});
 }
 
 // v38.6 — Cantidades de materia prima: kg y litros siempre con 3 decimales (3,352 · 3,120 · 0,250).
@@ -6441,7 +6441,7 @@ function renderRecetas(){
       <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;padding:14px 20px;background:var(--trigo-lt);border-top:2px solid var(--trigo)">
         <div style="min-width:140px">
           <div style="font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--trigo-dk);text-transform:uppercase">⚖️ Peso de la masa</div>
-          <div style="font-family:'Playfair Display',serif;font-size:19px;font-weight:700;color:var(--horno)">${fmtN(pesoKg)} kg</div>
+          <div style="font-family:'Playfair Display',serif;font-size:19px;font-weight:700;color:var(--horno)">${fmtQ(pesoKg,'kg')} kg</div>
           <div style="font-size:10px;color:var(--texto-2)">suma de kg y litros</div>
         </div>
         <div style="min-width:130px">
@@ -6700,7 +6700,7 @@ function imprimirReceta(id){
   <div class="meta">Panadería Belén · Fórmula de taller · ${rec.id}</div>
   <table><thead><tr><th>INGREDIENTE</th><th style="text-align:right">CANTIDAD</th><th>UNIDAD</th></tr></thead><tbody>${filas}</tbody></table>
   <div class="rinde">
-    <strong>Rinde:</strong> masa de ${fmtN(c.pesoKg)} kg
+    <strong>Rinde:</strong> masa de ${fmtQ(c.pesoKg,'kg')} kg
     ${c.piezas>0?(c.modoPorciones?` · <strong>${fmtN(c.piezas)} porciones</strong>${c.pesoPorcionCruda>0?` de ≈ ${fmtN(c.pesoPorcionCruda)} g`:''}`:` · ${fmtN(c.piezas)} piezas de ${fmtN(rec.pesoPieza)} g`):''}
     ${c.pesoFinalPieza>0?` (≈ ${fmtN(c.pesoFinalPieza)} g cocida)`:''}
     ${c.alfajores>0?` · <strong>${fmtN(c.alfajores)} alfajores</strong> (${c.tapas} tapas c/u)`:''}
@@ -6770,17 +6770,17 @@ function calcularEscalado(){
     if(c.modoPorciones){
       // Se conocen las porciones del lote: escalar proporcionalmente
       factor = piezasObj / c.piezas;
-      detalle = `${fmtN(piezasObj)} porciones (el lote base rinde ${fmtN(c.piezas)}) = masa de ${fmtN(c.pesoKg*factor)} kg`;
+      detalle = `${fmtN(piezasObj)} porciones (el lote base rinde ${fmtN(c.piezas)}) = masa de ${fmtQ(c.pesoKg*factor,'kg')} kg`;
     } else if(rec.pesoPieza > 0){
       factor = (piezasObj * rec.pesoPieza / 1000) / c.pesoKg;
-      detalle = `${fmtN(piezasObj)} piezas de ${fmtN(rec.pesoPieza)} g = masa de ${fmtN(piezasObj*rec.pesoPieza/1000)} kg`;
+      detalle = `${fmtN(piezasObj)} piezas de ${fmtN(rec.pesoPieza)} g = masa de ${fmtQ(piezasObj*rec.pesoPieza/1000,'kg')} kg`;
     } else {
       out.innerHTML = '⚠️ Primero cargá el "peso por pieza" o las "porciones" en la tarjeta de la receta para poder escalar por piezas.'; return;
     }
   } else if(kgObj > 0){
     factor = kgObj / c.pesoKg;
     const piezasCalc = rec.pesoPieza > 0 ? Math.floor(kgObj*1000/rec.pesoPieza) : 0;
-    detalle = `Masa de ${fmtN(kgObj)} kg${piezasCalc>0?` ≈ ${fmtN(piezasCalc)} piezas`:''}`;
+    detalle = `Masa de ${fmtQ(kgObj,'kg')} kg${piezasCalc>0?` ≈ ${fmtN(piezasCalc)} piezas`:''}`;
   } else {
     out.innerHTML = 'Ingresá piezas o kilos para calcular.';
     return;
@@ -6836,17 +6836,17 @@ function imprimirEscalado(){
   if(escPiezas > 0){
     if(c.modoPorciones){
       factor = escPiezas / c.piezas;
-      detalle = `${fmtN(escPiezas)} porciones — lote base: ${fmtN(c.piezas)} — masa: ${fmtN(c.pesoKg*factor)} kg`;
+      detalle = `${fmtN(escPiezas)} porciones — lote base: ${fmtN(c.piezas)} — masa: ${fmtQ(c.pesoKg*factor,'kg')} kg`;
     } else if(rec.pesoPieza > 0){
       factor = (escPiezas * rec.pesoPieza / 1000) / c.pesoKg;
-      detalle = `${fmtN(escPiezas)} piezas de ${fmtN(rec.pesoPieza)} g — masa total: ${fmtN(escPiezas*rec.pesoPieza/1000)} kg`;
+      detalle = `${fmtN(escPiezas)} piezas de ${fmtN(rec.pesoPieza)} g — masa total: ${fmtQ(escPiezas*rec.pesoPieza/1000,'kg')} kg`;
     } else {
       toast('⚠️ La receta no tiene peso por pieza definido','error'); return;
     }
   } else {
     factor = escKg / c.pesoKg;
     const piezasCalc = rec.pesoPieza > 0 ? Math.floor(escKg*1000/rec.pesoPieza) : 0;
-    detalle = `Masa de ${fmtN(escKg)} kg${piezasCalc>0?' — aprox. '+fmtN(piezasCalc)+' piezas':''}`;
+    detalle = `Masa de ${fmtQ(escKg,'kg')} kg${piezasCalc>0?' — aprox. '+fmtN(piezasCalc)+' piezas':''}`;
   }
   if(!(c.pesoKg > 0)){ toast('⚠️ La receta no tiene peso calculable','error'); return; }
 
@@ -6993,7 +6993,7 @@ function imprimirOrdenProduccion(nro){
     <span>Estado: <strong>${o.estado}</strong></span>
   </div>
   <h2>Producto: ${o.producto}</h2>
-  <div style="font-size:14px">Cantidad: <strong>${fmtN(o.unidades)} ${modoTxt}</strong> (equivale a ${fmtN(lotesO)} lote(s) · masa de ${rec?fmtN(pesoTotalReceta(rec)*lotesO):'?'} kg)</div>
+  <div style="font-size:14px">Cantidad: <strong>${fmtN(o.unidades)} ${modoTxt}</strong> (equivale a ${fmtN(lotesO)} lote(s) · masa de ${rec?fmtQ(pesoTotalReceta(rec)*lotesO,'kg'):'?'} kg)</div>
   ${filasOper?`<h2>👩‍🍳 Operarios asignados</h2><table><thead><tr><th>NOMBRE</th><th>TAREA</th></tr></thead><tbody>${filasOper}</tbody></table>`:''}
   <h2>📋 Insumos necesarios (sub-recetas ya expandidas)</h2>
   <table><thead><tr><th>INSUMO</th><th style="text-align:right">CANTIDAD</th><th>UNIDAD</th></tr></thead><tbody>${filasIns}</tbody></table>
@@ -9502,9 +9502,9 @@ function previsualizarReceta(){
   // Encabezado de equivalencia (ej: 6 porciones = 0,6 lotes · masa 3 kg)
   const equivalencia = modo==='piezas'
     ? `<div style="background:var(--trigo-lt);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;color:var(--trigo-dk);margin-bottom:8px">
-        ${fmtN(cantidad)} ${conv.modoPorciones?'porciones':'piezas'} = ${fmtN(lotes)} lote(s) · masa de ${fmtN(pesoTotalReceta(rec)*lotes)} kg (el lote completo rinde ${fmtN(conv.piezasPorLote)})</div>`
+        ${fmtN(cantidad)} ${conv.modoPorciones?'porciones':'piezas'} = ${fmtN(lotes)} lote(s) · masa de ${fmtQ(pesoTotalReceta(rec)*lotes,'kg')} kg (el lote completo rinde ${fmtN(conv.piezasPorLote)})</div>`
     : `<div style="background:var(--trigo-lt);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;color:var(--trigo-dk);margin-bottom:8px">
-        ${fmtN(lotes)} lote(s) · masa de ${fmtN(pesoTotalReceta(rec)*lotes)} kg</div>`;
+        ${fmtN(lotes)} lote(s) · masa de ${fmtQ(pesoTotalReceta(rec)*lotes,'kg')} kg</div>`;
 
   // Expansión a insumos base (incluye los de las sub-recetas)
   const mapa = insumosNecesariosReceta(rec, lotes);
@@ -16725,7 +16725,7 @@ function kxMovInfo(){
   document.getElementById('kx-mv-cant-label').textContent =
     tipo==='conteo' ? 'Stock contado físicamente *' : tipo==='ajuste' ? 'Cantidad (+ suma, − resta) *' : 'Cantidad *';
   document.getElementById('kx-mv-nota-label').textContent = tipo==='ajuste' ? 'Qué corrige este ajuste *' : tipo==='ingreso' ? '¿De dónde vino? (donación, devolución, traslado…) *' : 'Nota';
-  document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtQ(ins.stock, ins.uom)} ${ins.uom||''} · $${fmtN(ins.precio)} sin IVA` : '';
+  document.getElementById('kx-mv-stock').textContent = ins ? `Stock en sistema: ${fmtQ(ins.stock, ins.uom)} ${ins.uom||''} · ${fmt$(ins.precio)} sin IVA` : '';
   const prev = document.getElementById('kx-mv-preview');
   if(!ins || isNaN(cant)){ prev.innerHTML = 'Elegí el insumo y la cantidad para ver el efecto.'; return; }
   const d = kxCalcDeltaManual(ins, tipo, cant);
@@ -17427,7 +17427,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD = '38.6';
+const BELEN_BUILD='38.7';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -21489,7 +21489,7 @@ function kxEscHarinaAKg(rec){
     try{ oc.apply(this, arguments); } finally { kgIn.value = ''; }
     try{
       const banner = out.querySelector('div');
-      if(banner) banner.innerHTML = `🌾 Con ${fmtN(x.hv)} kg de harina (el lote base lleva ${fmtN(kxR(x.hb.total))} kg) → ` + banner.innerHTML;
+      if(banner) banner.innerHTML = `🌾 Con ${fmtQ(x.hv,'kg')} kg de harina (el lote base lleva ${fmtQ(kxR(x.hb.total),'kg')} kg) → ` + banner.innerHTML;
       out.querySelectorAll('tbody tr').forEach(tr=>{
         const n = tr.children[0]?.textContent||'';
         if(x.hb.lista.some(h=>n.includes(h.ins.desc))) tr.style.fontWeight = '700';
@@ -21509,7 +21509,7 @@ function kxEscHarinaAKg(rec){
       if(w && w.document && w.document.body){
         const d = w.document.createElement('div');
         d.style.cssText = 'font:700 14px Arial;padding:8px 10px;margin:8px 0;background:#F6EFE3;border-left:4px solid #A34E17';
-        d.textContent = `🌾 Escalado por harina: ${fmtN(x.hv)} kg de harina (lote base ${fmtN(kxR(x.hb.total))} kg) · factor ×${fmtN(kxR(x.factor,3))}`;
+        d.textContent = `🌾 Escalado por harina: ${fmtQ(x.hv,'kg')} kg de harina (lote base ${fmtQ(kxR(x.hb.total),'kg')} kg) · factor ×${fmtN(kxR(x.factor,3))}`;
         w.document.body.insertBefore(d, w.document.body.firstChild);
       }
     }catch(_){}
@@ -23080,7 +23080,7 @@ function kxCompRender(){
       l.map(c=>{ const ins = getInsumo(c.ins); const u = ult(c);
         return `<tr><td><strong>${kxEsc(c.nombre)}</strong><div style="font-size:10px;color:var(--texto-2)">${kxEsc(ins?ins.desc:'⚠️ insumo no encontrado')} · ${fmt$(ins?ins.precio:0)} por ${kxEsc(ins?ins.uom:'')}</div></td>
           <td>${fmtQ(c.cantidad, (ins&&ins.uom))} ${kxEsc(ins?ins.uom:'')} cada ${fmtN(c.dias)} días</td>
-          <td style="text-align:right">${fmtN(c.kgPeriodo)} kg</td><td style="text-align:right;font-weight:800">${fmt$(kxCompCostoKg(c))}</td>
+          <td style="text-align:right">${fmtQ(c.kgPeriodo,'kg')} kg</td><td style="text-align:right;font-weight:800">${fmt$(kxCompCostoKg(c))}</td>
           <td>${(c.recetas||[]).length}</td><td style="font-size:11px">${u?`${u.fecha.split('-').reverse().join('/')} · ${kxEsc(kxFabNombre(u.fab))}`:'—'}</td>
           <td style="white-space:nowrap"><button class="btn-primary" style="padding:4px 9px" onclick="kxCompEvento('${c.id}')">🫗 Registrar cambio</button>
             <button class="btn-secondary" style="padding:4px 9px" onclick="kxCompReal('${c.id}')">📊 Real vs estimado</button>
@@ -23124,7 +23124,7 @@ function kxCompForm(id){
       <button class="btn-secondary" onclick="kxCompRender()">Volver</button><button class="btn-primary" onclick="kxCompGuardar('${c?c.id:''}')">✅ Guardar</button></div>`;
   const calc = ()=>{ const ins = getInsumo(kxVal('kxc-ins')); const cant = parseFloat(kxVal('kxc-cant'))||0, kg = parseFloat(kxVal('kxc-kg'))||0;
     document.getElementById('kxc-calc').innerHTML = ins && cant && kg
-      ? `🧮 ${fmtQ(cant, ins.uom)} ${kxEsc(ins.uom||'')} × ${fmt$(ins.precio)} = <strong>${fmt$(cant*ins.precio)}</strong> por cambio ÷ ${fmtN(kg)} kg = <strong>${fmt$(cant*ins.precio/kg)} por kg de masa</strong> · ${fmtQ(+(cant/kg).toFixed(3), ins.uom)} ${kxEsc(ins.uom||'')} por kg`
+      ? `🧮 ${fmtQ(cant, ins.uom)} ${kxEsc(ins.uom||'')} × ${fmt$(ins.precio)} = <strong>${fmt$(cant*ins.precio)}</strong> por cambio ÷ ${fmtQ(kg,'kg')} kg = <strong>${fmt$(cant*ins.precio/kg)} por kg de masa</strong> · ${fmtQ(+(cant/kg).toFixed(3), ins.uom)} ${kxEsc(ins.uom||'')} por kg`
       : 'Completá insumo, cantidad y kg para ver el costo por kilo.'; };
   ['kxc-ins','kxc-cant','kxc-kg'].forEach(i=>{ const e = document.getElementById(i); e.addEventListener('input', calc); e.addEventListener('change', calc); });
   document.getElementById('kxc-busca').addEventListener('input', e=>{ const q = e.target.value.toLowerCase(); document.querySelectorAll('.kxc-rec').forEach(l=>{ l.style.display = l.dataset.n.includes(q) ? '' : 'none'; }); });
@@ -23140,7 +23140,7 @@ function kxCompGuardar(id){
   const antes = c ? JSON.stringify({cantidad:c.cantidad, kg:c.kgPeriodo, n:(c.recetas||[]).length}) : '';
   if(!c){ c = { id:'IC-' + ahora.toString(36).toUpperCase() }; DB.insumosCompartidos.push(c); }
   Object.assign(c, { nombre, ins, cantidad, dias, kgPeriodo, recetas, _ts: ahora, por: usuarioActual.nombre });
-  registrarAuditoria(id?'Modificación':'Creación', `Insumo compartido ${c.id} — ${nombre}`, `${fmtN(cantidad)} cada ${dias} días · ${fmtN(kgPeriodo)} kg entre cambios · ${recetas.length} receta(s) · ${fmt$(kxCompCostoKg(c))} por kg${antes?' · antes '+antes:''}`);
+  registrarAuditoria(id?'Modificación':'Creación', `Insumo compartido ${c.id} — ${nombre}`, `${fmtN(cantidad)} cada ${dias} días · ${fmtQ(kgPeriodo,'kg')} kg entre cambios · ${recetas.length} receta(s) · ${fmt$(kxCompCostoKg(c))} por kg${antes?' · antes '+antes:''}`);
   guardarEnStorage(); toast(`✅ ${nombre} guardado · ${fmt$(kxCompCostoKg(c))} por kg de masa`,'success');
   try{ renderRecetas(); }catch(_){}
   kxCompRender();
@@ -23208,7 +23208,7 @@ function kxCompReal(id){
 }
 function kxCompUsarReal(id, kg){
   const c = DB.insumosCompartidos.find(x=>x.id===id); if(!c) return;
-  if(!confirm(`Cambiar el estimado de ${fmtN(c.kgPeriodo)} kg a ${fmtN(kg)} kg entre cambios? El costo por kg de las recetas se recalcula.`)) return;
+  if(!confirm(`Cambiar el estimado de ${fmtQ(c.kgPeriodo,'kg')} kg a ${fmtQ(kg,'kg')} kg entre cambios? El costo por kg de las recetas se recalcula.`)) return;
   registrarAuditoria('Modificación', `Insumo compartido ${c.id} — ${c.nombre}`, `Estimado ${c.kgPeriodo} → ${kg} kg (dato real)`);
   c.kgPeriodo = kg; c._ts = Date.now(); guardarEnStorage(); try{ renderRecetas(); }catch(_){} kxCompRender();
 }
