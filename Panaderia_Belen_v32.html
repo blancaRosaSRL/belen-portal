@@ -3727,6 +3727,25 @@
             </div>
           </div>
         </div>
+        <!-- SECCIÓN PACKAGING (v38.8) -->
+        <div class="form-group span2" id="rec-packaging-wrap">
+          <div style="background:var(--vapor);border:1.5px solid var(--borde);border-radius:var(--r);padding:12px 14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:13px;font-weight:700;color:var(--corteza);letter-spacing:.5px">📦 PACKAGING</span>
+                <span style="font-size:11px;color:var(--texto-2)">— materiales de la sección Packaging, cantidad por unidad</span>
+              </div>
+              <span id="rec-pkg-total" style="font-size:12px;font-weight:700;color:var(--trigo-dk)"></span>
+            </div>
+            <div style="font-size:11px;color:var(--texto-2);margin-bottom:8px;background:#fff;padding:8px 10px;border-radius:6px;border:1px solid var(--borde)">
+              💡 Pirotín, bolsa, moño, etiqueta, caja… <strong>Cantidad por unidad final</strong> (ej.: 1 pirotín por pan dulce; 0,5 si una caja lleva 2 unidades).
+              El stock de packaging se descuenta cuando la orden pasa a <strong>Ejecutada</strong>.
+            </div>
+            <div id="rec-pkg-list" style="display:flex;flex-direction:column;gap:8px"></div>
+            <div id="rec-pkg-nota" style="font-size:11px;color:var(--texto-2);margin-top:6px"></div>
+            <button type="button" class="btn-secondary" style="margin-top:8px;font-size:12px" onclick="kxPkgFila()">+ Agregar material de packaging</button>
+          </div>
+        </div>
         <div class="form-divider"></div>
         <!-- MANO DE OBRA -->
         <div class="form-group">
@@ -3948,6 +3967,11 @@
         </div>
 
         <div class="form-group">
+          <label>Unidades por presentación</label>
+          <input type="number" id="pkg-ud-pres" min="1" step="1" value="1" oninput="calcularIVAPkg()">
+          <span class="hint">Si comprás por paquete o rollo: cuántas unidades trae (ej.: paquete de 100 bolsas). Si es por unidad, dejá 1.</span>
+        </div>
+        <div class="form-group">
           <label>Proveedor <span style="font-size:10px;color:var(--texto-2)">(opcional)</span></label>
           <select id="pkg-proveedor">
             <option value="">— Sin proveedor asignado —</option>
@@ -3999,7 +4023,7 @@
               </div>
             </div>
             <div style="margin-top:10px;font-size:12px;color:var(--texto-2)">
-              Costo por unidad/pieza:
+              Costo por unidad/pieza <span style="font-size:10px">(sin IVA, es el que va a las recetas)</span>:
               <strong id="pkg-costo-unit" style="color:var(--corteza)">$0.00</strong>
             </div>
           </div>
@@ -4007,10 +4031,10 @@
 
         <!-- ASIGNACIÓN A PRODUCTOS / COMBOS -->
         <div class="form-group span2">
-          <label>📎 Asignado a productos o combos <span style="font-size:10px;color:var(--texto-2)">(opcional)</span></label>
+          <label>📎 Asignado a recetas, productos o combos <span style="font-size:10px;color:var(--texto-2)">(opcional)</span></label>
           <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
             <div style="flex:1;min-width:200px;position:relative">
-              <input type="text" id="pkg-asig-buscar" placeholder="Buscar producto o combo…"
+              <input type="text" id="pkg-asig-buscar" placeholder="Buscar receta, producto o combo…"
                 autocomplete="off" oninput="filtrarAsignacionPkg(this.value)" onfocus="filtrarAsignacionPkg(this.value)"
                 style="width:100%;padding:7px 12px;border:1.5px solid var(--borde);border-radius:var(--r-sm);
                        font-family:'Inter',sans-serif;font-size:13px;background:var(--miga)">
@@ -4019,7 +4043,7 @@
                        background:#fff;border:1.5px solid var(--borde);border-radius:var(--r);
                        box-shadow:var(--sombra-lg);z-index:300;max-height:200px;overflow-y:auto"></div>
             </div>
-            <input type="number" id="pkg-asig-cant" placeholder="Cant. por unidad" min="1" step="1" value="1"
+            <input type="number" id="pkg-asig-cant" placeholder="Cant. por unidad" min="0" step="0.01" value="1"
               style="width:140px;padding:7px 10px;border:1.5px solid var(--borde);border-radius:var(--r-sm);font-family:'Inter',sans-serif;font-size:13px">
             <button type="button" class="btn-secondary" style="padding:7px 12px;font-size:13px" onclick="agregarAsignacionPkg()">➕ Asignar</button>
           </div>
@@ -6350,7 +6374,7 @@ function refrescarRendimientoReceta(recId){
   const _mo = calcularCostoMOReceta(rec);
   const _cpkg = costoPackagingPorReceta(recId);
   const _und = rec.esAlfajor ? c.alfajores : c.piezas;
-  const _tot = (rec.esAlfajor ? c.costoAlfajorTotal : c.costoUnidadTotal) + (_und>0 ? _mo/_und : 0) + _cpkg;
+  const _tot = (rec.esAlfajor ? c.costoAlfajorTotal : c.costoUnidadTotal) + (_und>0 ? _mo/_und : 0); // v38.8: el packaging ya viene en el costo por unidad
   set('rend-total-unidad-'+recId, _und > 0 ? fmt$(_tot) : '—');
   set('rend-lbl-total-'+recId, '💰 COSTO TOTAL POR ' + (rec.esAlfajor ? 'ALFAJOR' : 'UNIDAD'));
 }
@@ -6419,7 +6443,7 @@ function renderRecetas(){
         <span style="color:rgba(255,255,255,.6);font-size:12px;margin-left:8px">${r.id}</span>
         <div class="card-actions">
           ${faltantes>0?`<span style="background:var(--alerta-lt);color:var(--alerta);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">⚠️ ${faltantes} sin stock</span>`:''}
-          <span style="background:rgba(200,134,10,.3);color:var(--trigo);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">Costo: ${kxCostoLote(r,1)>0 ? fmt$(kxCostoLote(r,1)) : '⚠️ Sin precios'} / lote${(calc.costoRellenoTotal+calc.costoDecTotal)>0?' <span style="font-weight:400;opacity:.85">(masa + relleno + decorado)</span>':''}</span>
+          <span style="background:rgba(200,134,10,.3);color:var(--trigo);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700">Costo: ${kxCostoLote(r,1)>0 ? fmt$(kxCostoLote(r,1)) : '⚠️ Sin precios'} / lote${kxEtiqLote(r,calc)?' <span style="font-weight:400;opacity:.85">('+kxEtiqLote(r,calc)+')</span>':''}</span>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="abrirEscalarReceta('${r.id}')">⚖️ Escalar</button>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="imprimirReceta('${r.id}')">🖨️ Imprimir</button>
           <button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="duplicarReceta('${r.id}')">📄 Duplicar</button>
@@ -6432,7 +6456,7 @@ function renderRecetas(){
           <thead><tr><th>Código</th><th>Insumo</th><th>Cantidad</th><th>UOM</th><th>$ Unitario</th><th>Subtotal</th><th>% Costo</th></tr></thead>
           <tbody>${rows}${kxFilasSecciones(r, calc, costo)}</tbody>
           <tfoot><tr style="background:var(--miga-dk)">
-            <td colspan="5" style="padding:10px 14px;font-weight:700;font-size:12px;color:var(--corteza)">COSTO TOTAL DEL LOTE${(calc.costoRellenoTotal+calc.costoDecTotal)>0?' (masa + relleno + decorado)':''}</td>
+            <td colspan="5" style="padding:10px 14px;font-weight:700;font-size:12px;color:var(--corteza)">COSTO TOTAL DEL LOTE${kxEtiqLote(r,calc)?' ('+kxEtiqLote(r,calc)+')':''}</td>
             <td style="padding:10px 14px;font-weight:700;font-size:15px;color:var(--trigo-dk)">${fmt$(kxCostoLote(r,1))}</td>
             <td></td>
           </tr></tfoot>
@@ -6504,12 +6528,12 @@ function renderRecetas(){
                 <span style="font-weight:700">${fmt$(costoMO)}</span>
               </div>`:''})()}
               ${(()=>{const cpkg=costoPackagingPorReceta(r.id); return cpkg>0?`<div style="display:flex;justify-content:space-between;color:var(--horno)">
-                <span>📦 Packaging (${materialesPackagingDeReceta(r.id).map(m=>m.nombre).join(', ')})</span>
+                <span>📦 Packaging por unidad (${materialesPackagingDeReceta(r.id).map(m=>m.nombre).join(', ')})</span>
                 <span style="font-weight:700">${fmt$(cpkg)}</span>
               </div>`:''})()}
               <div style="display:flex;justify-content:space-between;border-top:1.5px solid var(--borde);margin-top:4px;padding-top:4px;font-weight:800;color:var(--trigo-dk)">
                 <span id="rend-lbl-total-${r.id}">💰 COSTO TOTAL POR ${r.esAlfajor?'ALFAJOR':'UNIDAD'}</span>
-                <span id="rend-total-unidad-${r.id}">${(()=>{const mo=calcularCostoMOReceta(r); const cpkg=costoPackagingPorReceta(r.id); const und=r.esAlfajor?calc.alfajores:calc.piezas; const tot=(r.esAlfajor?calc.costoAlfajorTotal:calc.costoUnidadTotal)+(und>0?mo/und:0)+cpkg; return fmt$(tot);})()}</span>
+                <span id="rend-total-unidad-${r.id}">${(()=>{const mo=calcularCostoMOReceta(r); const cpkg=costoPackagingPorReceta(r.id); const und=r.esAlfajor?calc.alfajores:calc.piezas; const tot=(r.esAlfajor?calc.costoAlfajorTotal:calc.costoUnidadTotal)+(und>0?mo/und:0); return fmt$(tot);})()}</span>
               </div>
             </div>
           </div>`:''}
@@ -14936,10 +14960,10 @@ function tomarSnapshotCostos(){
     const moUnit = und > 0 ? costoMO/und : 0;
     snapshot.costos[rec.id] = {
       nombre: rec.nombre,
-      costoMasa: costoUnit,
+      costoMasa: costoUnit - costoPkg, // v38.8: el costo por unidad ya incluye el packaging
       costoMO: moUnit,
       costoPkg,
-      costoTotal: costoUnit + moUnit + costoPkg,
+      costoTotal: costoUnit + moUnit,
       precioSugerido: calc.precioSugerido||0
     };
   });
@@ -15019,7 +15043,8 @@ function calcularIVAPkg(){
   const p=parseFloat(document.getElementById('pkg-ivapct').value)||0;
   const con=s*(1+p/100);
   document.getElementById('pkg-coniva').textContent=fmt$(con);
-  document.getElementById('pkg-costo-unit').textContent=fmt$(con);
+  const ud=Math.max(1, parseFloat(document.getElementById('pkg-ud-pres')?.value)||1);
+  document.getElementById('pkg-costo-unit').textContent=fmt$(s/ud);
 }
 
 // ── Abrir modal nuevo/editar ──
@@ -15046,6 +15071,7 @@ function abrirModalPkg(id){
     document.getElementById('pkg-stock-min').value=m.stockMin||0;
     document.getElementById('pkg-siniva').value=m.sinIVA||'';
     document.getElementById('pkg-ivapct').value=m.ivaPct||21;
+    document.getElementById('pkg-ud-pres').value=m.udPorPres||1;
     document.getElementById('pkg-obs').value=m.obs||'';
     _pkgAsignaciones=(m.asignaciones||[]).map(a=>({...a}));
     calcularIVAPkg();
@@ -15059,6 +15085,7 @@ function abrirModalPkg(id){
     document.getElementById('pkg-stock-min').value='';
     document.getElementById('pkg-siniva').value='';
     document.getElementById('pkg-ivapct').value='21';
+    document.getElementById('pkg-ud-pres').value='1';
     document.getElementById('pkg-coniva').textContent='$0.00';
     document.getElementById('pkg-costo-unit').textContent='$0.00';
   }
@@ -15074,6 +15101,7 @@ function filtrarAsignacionPkg(term){
   const dd=document.getElementById('pkg-asig-dropdown');
   const q=(term||'').trim().toLowerCase();
   const fuentes=[
+    ...(DB.recetas||[]).filter(r=>!r.baja).map(r=>({id:r.id,nombre:r.nombre,tipo:'Receta'})),
     ...(DB.catalogoProductos||[]).map(p=>({id:p.id,nombre:p.nombre,tipo:'Producto'})),
     ...(DB.combos||[]).map(c=>({id:c.id,nombre:c.nombre,tipo:'Combo'})),
   ];
@@ -15101,8 +15129,8 @@ document.addEventListener('click',function(e){
   if(!e.target.closest('#pkg-asig-buscar')&&!e.target.closest('#pkg-asig-dropdown')) cerrarDropdownPkgAsig();
 });
 function agregarAsignacionPkg(){
-  if(!_pkgAsigSelId){toast('⚠️ Seleccioná un producto o combo','error');return;}
-  const cant=parseInt(document.getElementById('pkg-asig-cant').value)||1;
+  if(!_pkgAsigSelId){toast('⚠️ Seleccioná una receta, producto o combo','error');return;}
+  const cant=parseFloat(String(document.getElementById('pkg-asig-cant').value).replace(',','.'))||1;
   const yaExiste=_pkgAsignaciones.find(a=>a.id===_pkgAsigSelId);
   if(yaExiste){toast('⚠️ Ya está asignado','error');return;}
   _pkgAsignaciones.push({id:_pkgAsigSelId,nombre:_pkgAsigSelNombre,tipo:_pkgAsigSelTipo,cantPorUnidad:cant});
@@ -15125,7 +15153,7 @@ function renderAsignacionesPkg(){
       <span style="font-size:11px;background:${a.tipo==='Combo'?'var(--trigo-lt)':'var(--vapor)'};
                    padding:2px 7px;border-radius:10px;font-weight:700">${a.tipo}</span>
       <span style="flex:1;font-weight:600">${a.nombre}</span>
-      <span style="color:var(--texto-2);font-size:12px">${a.cantPorUnidad} ud. por unidad/combo</span>
+      <span style="color:var(--texto-2);font-size:12px">${fmtN(a.cantPorUnidad)} ud. por unidad/combo</span>
       <button onclick="quitarAsignacionPkg(${i})"
         style="background:var(--alerta-lt);border:1px solid var(--alerta);border-radius:4px;
                padding:3px 7px;cursor:pointer;color:var(--alerta);font-weight:700">✕</button>
@@ -15141,7 +15169,8 @@ function guardarPkg(){
 
   const sinIVA=parseFloat(document.getElementById('pkg-siniva').value)||0;
   const ivaPct=parseFloat(document.getElementById('pkg-ivapct').value)||0;
-  const conIVA=parseFloat(document.getElementById('mp-coniva').value)||sinIVA*(1+ivaPct/100);
+  const conIVA=sinIVA*(1+ivaPct/100);
+  const udPorPres=Math.max(1, parseFloat(document.getElementById('pkg-ud-pres')?.value)||1);
 
   const m={
     id:_pkgEditId||genIdPkg(),
@@ -15152,7 +15181,7 @@ function guardarPkg(){
     proveedorLibre:document.getElementById('pkg-proveedor-libre').value.trim(),
     stock:parseFloat(document.getElementById('pkg-stock').value)||0,
     stockMin:parseFloat(document.getElementById('pkg-stock-min').value)||0,
-    sinIVA,ivaPct,conIVA,
+    sinIVA,ivaPct,conIVA,udPorPres,
     obs:document.getElementById('pkg-obs').value.trim(),
     asignaciones:_pkgAsignaciones.map(a=>({...a})),
     fechaMod:new Date().toISOString(),
@@ -15391,12 +15420,25 @@ function renderPackaging(){
 function costoPackagingPorReceta(recId){
   if(!recId || !DB.packaging) return 0;
   return (DB.packaging||[]).reduce((total, mat)=>{
-    const asig = (mat.asignaciones||[]).find(a=>a.id===recId);
+    const asig = kxPkgAsigReceta(mat, recId);
     if(!asig) return total;
-    const cantPorUd = parseFloat(asig.cantPorUnidad)||1;
-    const costo = parseFloat(mat.conIVA||0);
-    return total + (costo * cantPorUd);
+    const cantPorUd = parseFloat(asig.cantPorUnidad)||0;
+    return total + (kxPkgCU(mat) * cantPorUd);
   }, 0);
+}
+// v38.8: costo por unidad de material, SIN IVA (igual que la materia prima) y dividido por las unidades del paquete
+function kxPkgCU(mat){
+  if(!mat) return 0;
+  let s = Number(mat.sinIVA)||0;
+  if(!(s>0) && Number(mat.conIVA)>0) s = Number(mat.conIVA)/(1+(Number(mat.ivaPct)||0)/100);
+  return s / Math.max(1, Number(mat.udPorPres)||1);
+}
+// Asignación de un material a una receta: directa, o a un producto del catálogo hecho con esa receta
+function kxPkgAsigReceta(mat, recId){
+  const as = mat.asignaciones||[];
+  const d = as.find(a=>a.id===recId); if(d) return d;
+  const prods = (DB.catalogoProductos||[]).filter(p=>p.recetaId===recId).map(p=>p.id);
+  return prods.length ? as.find(a=>prods.includes(a.id)) : null;
 }
 
 function costoPackagingPorCatalogo(prodId){
@@ -15404,15 +15446,14 @@ function costoPackagingPorCatalogo(prodId){
   return (DB.packaging||[]).reduce((total, mat)=>{
     const asig = (mat.asignaciones||[]).find(a=>a.id===prodId);
     if(!asig) return total;
-    const cantPorUd = parseFloat(asig.cantPorUnidad)||1;
-    const costo = parseFloat(mat.conIVA||0);
-    return total + (costo * cantPorUd);
+    const cantPorUd = parseFloat(asig.cantPorUnidad)||0;
+    return total + (kxPkgCU(mat) * cantPorUd);
   }, 0);
 }
 
 function materialesPackagingDeReceta(recId){
   if(!recId || !DB.packaging) return [];
-  return (DB.packaging||[]).filter(mat=>(mat.asignaciones||[]).some(a=>a.id===recId));
+  return (DB.packaging||[]).filter(mat=>!!kxPkgAsigReceta(mat, recId));
 }
 
 // ══ FIN MÓDULO PACKAGING ══
@@ -17427,7 +17468,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD='38.7';
+const BELEN_BUILD='38.8';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -23238,8 +23279,20 @@ function kxCostoLote(rec, lotes){
   if(!rec) return 0;
   const l = Number(lotes)||0;
   const masa = calcCostoReceta(rec, l);
-  try{ const c = calcularRendimientoCompleto(rec); return masa + ((Number(c.costoRellenoTotal)||0) + (Number(c.costoDecTotal)||0)) * l; }
+  try{ const c = calcularRendimientoCompleto(rec); return masa + ((Number(c.costoRellenoTotal)||0) + (Number(c.costoDecTotal)||0)) * l + kxPkgCostoLote(rec, c) * l; }
   catch(_){ return masa; }
+}
+// v38.8: packaging de un lote = costo por unidad × unidades del lote
+function kxPkgCostoLote(rec, c){
+  try{ c = c || calcularRendimientoCompleto(rec); return Number(c.costoPkgTotal)||0; }catch(_){ return 0; }
+}
+// Leyenda de qué incluye el costo del lote
+function kxEtiqLote(r, calc){
+  const p = ['masa'];
+  if((Number(calc.costoRellenoTotal)||0)>0) p.push('relleno');
+  if((Number(calc.costoDecTotal)||0)>0) p.push('decorado');
+  if(kxPkgCostoLote(r, calc)>0) p.push('packaging');
+  return p.length>1 ? p.join(' + ') : '';
 }
 // Filas del relleno y decorado en la tabla de la receta
 function kxFilasSecciones(r, calc, costoMasa){
@@ -23471,6 +23524,228 @@ function kxModoCambio(s){
     return r;
   };
 })();
+
+</script>
+<script>
+
+// ═══════════════════════════════════════════════════════════════
+// v38.8 — PACKAGING EN LAS RECETAS
+//   · En "Editar receta" se eligen materiales de la sección 📦 Packaging
+//     con su cantidad por unidad (se guarda como asignación del material).
+//   · El costo (sin IVA, por unidad de presentación) entra en la tarjeta,
+//     el costo del lote, Catálogo, Rentabilidad y Finanzas.
+//   · Cuando una orden pasa a Ejecutada se descuenta el stock de packaging
+//     (y se repone si se elimina una orden ejecutada).
+// ═══════════════════════════════════════════════════════════════
+function kxPkgMats(){ return (DB.packaging||[]).slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||''),'es')); }
+function kxPkgFila(matId, qty){
+  const list = document.getElementById('rec-pkg-list'); if(!list) return;
+  const mats = kxPkgMats();
+  if(!mats.length){ toast('⚠️ Primero cargá los materiales en la sección 📦 Packaging','error'); return; }
+  const div = document.createElement('div');
+  div.className = 'kxpkg-row';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <select class="kxpkg-mat" onchange="kxPkgTotalEditor()" style="flex:2;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+      <option value="">— Elegí un material —</option>
+      ${mats.map(m=>`<option value="${kxEsc(m.id)}" ${m.id===matId?'selected':''}>${kxEsc(m.nombre)}${m.tipo?' · '+kxEsc(m.tipo):''} — ${fmt$(kxPkgCU(m))}/ud.</option>`).join('')}
+    </select>
+    <input type="number" class="kxpkg-qty" min="0" step="0.01" placeholder="Cant. por unidad" value="${qty!=null&&qty!==''?qty:1}" oninput="kxPkgTotalEditor()"
+      style="width:130px;padding:8px 10px;border:1.5px solid var(--borde);border-radius:6px;font-family:'Inter',sans-serif;font-size:13px">
+    <button type="button" onclick="this.parentElement.remove();kxPkgTotalEditor()" title="Quitar"
+      style="background:var(--alerta-lt);border:1px solid var(--alerta);border-radius:6px;padding:6px 9px;cursor:pointer;color:var(--alerta);font-weight:700">✕</button>`;
+  list.appendChild(div);
+  kxPkgTotalEditor();
+}
+function kxPkgLeerEditor(){
+  const m = {};
+  document.querySelectorAll('#rec-pkg-list .kxpkg-row').forEach(row=>{
+    const id = row.querySelector('.kxpkg-mat')?.value;
+    const q = parseFloat(String(row.querySelector('.kxpkg-qty')?.value||'').replace(',','.'));
+    if(id && q>0) m[id] = (m[id]||0) + q;
+  });
+  return m;
+}
+function kxPkgTotalEditor(){
+  const el = document.getElementById('rec-pkg-total'); if(!el) return;
+  const sel = kxPkgLeerEditor();
+  const t = Object.entries(sel).reduce((s,[id,q])=>{ const m = (DB.packaging||[]).find(x=>x.id===id); return s + (m ? kxPkgCU(m)*q : 0); }, 0);
+  el.textContent = t>0 ? `Packaging por unidad: ${fmt$(t)}` : '';
+}
+function kxPkgCargarEditor(recId){
+  const list = document.getElementById('rec-pkg-list'); if(!list) return;
+  list.innerHTML = '';
+  const nota = document.getElementById('rec-pkg-nota');
+  const mats = DB.packaging||[];
+  if(recId) mats.forEach(m=>{ const a = (m.asignaciones||[]).find(x=>x.id===recId); if(a) kxPkgFila(m.id, a.cantPorUnidad); });
+  if(nota){
+    const msgs = [];
+    if(!mats.length) msgs.push('Todavía no hay materiales en 📦 Packaging. Cargalos ahí (precio sin IVA y unidades por paquete) y después elegilos acá.');
+    if(recId){
+      const prods = (DB.catalogoProductos||[]).filter(p=>p.recetaId===recId);
+      mats.forEach(m=>{
+        if((m.asignaciones||[]).some(x=>x.id===recId)) return;
+        const a = (m.asignaciones||[]).find(x=>prods.some(p=>p.id===x.id));
+        if(a) msgs.push(`También suma <strong>${kxEsc(m.nombre)}</strong> × ${fmtN(a.cantPorUnidad)} (asignado al producto "${kxEsc(a.nombre||'')}" del catálogo, se edita en 📦 Packaging).`);
+      });
+    }
+    nota.innerHTML = msgs.join('<br>');
+  }
+  kxPkgTotalEditor();
+}
+function kxPkgGuardarEditor(rec, sel){
+  if(!rec) return false;
+  const antes = JSON.stringify((DB.packaging||[]).map(m=>{ const a=(m.asignaciones||[]).find(x=>x.id===rec.id); return a?[m.id, Number(a.cantPorUnidad)]:null; }).filter(Boolean));
+  (DB.packaging||[]).forEach(m=>{
+    const as = (m.asignaciones||[]).filter(x=>x.id!==rec.id);
+    if(sel[m.id]>0) as.push({ id:rec.id, nombre:rec.nombre, tipo:'Receta', cantPorUnidad:+sel[m.id].toFixed(4) });
+    if(as.length !== (m.asignaciones||[]).length || sel[m.id]>0){ m.asignaciones = as; m.fechaMod = new Date().toISOString(); m._ts = Date.now(); }
+  });
+  const despues = JSON.stringify((DB.packaging||[]).map(m=>{ const a=(m.asignaciones||[]).find(x=>x.id===rec.id); return a?[m.id, Number(a.cantPorUnidad)]:null; }).filter(Boolean));
+  if(antes!==despues){
+    const det = Object.entries(sel).map(([id,q])=>{ const m=(DB.packaging||[]).find(x=>x.id===id); return `${m?m.nombre:id} × ${fmtN(q)}`; }).join(', ') || 'sin packaging';
+    registrarAuditoria('Modificación', `Receta ${rec.id} — ${rec.nombre}`, `Packaging por unidad: ${det}`);
+    return true;
+  }
+  return false;
+}
+(function(){
+  const on = window.abrirNuevaReceta;
+  window.abrirNuevaReceta = abrirNuevaReceta = function(){ const r = on.apply(this, arguments); try{ kxPkgCargarEditor(null); }catch(e){ console.warn('pkg', e); } return r; };
+  const oe = window.abrirEditarReceta;
+  window.abrirEditarReceta = abrirEditarReceta = function(id){ const r = oe.apply(this, arguments); try{ kxPkgCargarEditor(id); }catch(e){ console.warn('pkg', e); } return r; };
+  const og = window.guardarReceta;
+  window.guardarReceta = guardarReceta = function(){
+    const sel = kxPkgLeerEditor();
+    const id = recetaEditandoId || (document.getElementById('rec-id')||{}).value;
+    const r = og.apply(this, arguments);
+    try{
+      const rec = id ? getReceta(id) : null;
+      // sólo si la receta se guardó (el modal se cerró)
+      const abierto = document.getElementById('modal-receta')?.classList.contains('open');
+      if(rec && !abierto && kxPkgGuardarEditor(rec, sel)){ guardarEnStorage(); try{ renderRecetas(); }catch(_){} }
+    }catch(e){ console.warn('v38.8 guardar packaging:', e); }
+    return r;
+  };
+})();
+
+// El costo por unidad / alfajor, el costo total y el precio sugerido incluyen el packaging
+(function(){
+  const oc = window.calcularRendimientoCompleto;
+  window.calcularRendimientoCompleto = calcularRendimientoCompleto = function(rec){
+    const c = oc.apply(this, arguments);
+    try{
+      if(!rec || !c) return c;
+      const cu = costoPackagingPorReceta(rec.id);
+      const und = rec.esAlfajor ? c.alfajores : c.piezas;
+      c.costoPkgPorUnidad = 0; c.costoPkgTotal = 0;
+      if(!(cu>0) || !(und>0)) return c;
+      c.costoPkgPorUnidad = cu; c.costoPkgTotal = cu*und;
+      c.costoTotal = (Number(c.costoTotal)||0) + c.costoPkgTotal;
+      if(rec.esAlfajor){ if(c.costoAlfajorTotal>0 || c.costoAlfajor>0) c.costoAlfajorTotal = (Number(c.costoAlfajorTotal||c.costoAlfajor)||0) + cu; }
+      else if(c.costoUnidadTotal>0 || c.costoUnidad>0) c.costoUnidadTotal = (Number(c.costoUnidadTotal||c.costoUnidad)||0) + cu;
+      const margen = Math.max(0, Number(rec.margenPct)||0);
+      const base = rec.esAlfajor ? c.costoAlfajorTotal : c.costoUnidadTotal;
+      if(margen>0 && base>0) c.precioSugerido = base*(1+margen/100);
+    }catch(e){ console.warn('v38.8 rend pkg:', e); }
+    return c;
+  };
+})();
+// Filas de packaging en la tabla de la receta
+function kxPkgFilas(r, calc){
+  const mats = materialesPackagingDeReceta(r.id); if(!mats.length) return '';
+  const und = r.esAlfajor ? calc.alfajores : calc.piezas;
+  const filas = mats.map(m=>{
+    const a = kxPkgAsigReceta(m, r.id); const qu = Number(a&&a.cantPorUnidad)||0; const q = qu*(und||0); const pu = kxPkgCU(m);
+    return `<tr class="kxsec"><td><span class="mono">${kxEsc(m.codigo||m.id)}</span></td><td>${kxEsc(m.nombre)}<div style="font-size:10px;color:var(--texto-2)">${fmtN(qu)} por unidad × ${fmtN(Math.round(und||0))}${a&&a.tipo&&a.tipo!=='Receta'?' · asignado al producto '+kxEsc(a.nombre||''):''}</div></td>
+      <td>${fmtQ(q,'un')}</td><td>Un</td><td>${fmt$(pu)}</td><td><strong>${fmt$(q*pu)}</strong></td><td></td></tr>`;
+  }).join('');
+  const aviso = !(und>0) ? `<tr class="kxsec"><td colspan="7" style="color:#c0392b;font-size:12px;padding:6px 14px">⚠️ Para costear el packaging, cargá el peso por pieza o las porciones.</td></tr>` : '';
+  return `<tr class="kxsec"><td colspan="7" style="background:var(--miga,#f6efe3);font-weight:800;font-size:11px;letter-spacing:.5px;padding:6px 14px">📦 PACKAGING (por unidad × rinde del lote)</td></tr>` + filas + aviso;
+}
+(function(){
+  const of = window.kxFilasSecciones;
+  window.kxFilasSecciones = kxFilasSecciones = function(r, calc, costoMasa){
+    let h = String(of.apply(this, arguments)||'');
+    let p = ''; try{ p = kxPkgFilas(r, calc); }catch(e){ console.warn('pkg filas', e); }
+    if(p && !h) h = `<tr class="kxsec" style="background:var(--miga-dk)"><td colspan="5" style="padding:8px 14px;font-weight:700;font-size:11px;color:var(--corteza)">Subtotal masa</td><td style="padding:8px 14px;font-weight:700">${fmt$(costoMasa)}</td><td></td></tr>`;
+    return h + p;
+  };
+  const orr = window.refrescarRendimientoReceta;
+  window.refrescarRendimientoReceta = refrescarRendimientoReceta = function(recId){
+    const r = orr.apply(this, arguments);
+    try{
+      const rec = getReceta(recId); const card = document.getElementById('receta-card-'+recId);
+      if(!rec || !card) return r;
+      const calc = calcularRendimientoCompleto(rec); const total = kxCostoLote(rec, 1); const et = kxEtiqLote(rec, calc);
+      const badge = [...card.querySelectorAll('.card-actions span')].find(s=>/^\s*Costo:/.test(s.textContent));
+      if(badge) badge.innerHTML = `Costo: ${total>0 ? fmt$(total) : '⚠️ Sin precios'} / lote${et?' <span style="font-weight:400;opacity:.85">('+et+')</span>':''}`;
+      const tf = card.querySelector('table tfoot tr');
+      if(tf && tf.children[0]) tf.children[0].textContent = 'COSTO TOTAL DEL LOTE' + (et?' ('+et+')':'');
+    }catch(e){ console.warn('v38.8 refrescar:', e); }
+    return r;
+  };
+})();
+
+// ── Stock de packaging según órdenes ejecutadas ──
+function kxPkgNecesario(rec, lotes){
+  const res = {}; if(!rec) return res;
+  const calc = calcularRendimientoCompleto(rec); const und = rec.esAlfajor ? calc.alfajores : calc.piezas;
+  if(!(und>0)) return res;
+  materialesPackagingDeReceta(rec.id).forEach(m=>{
+    const a = kxPkgAsigReceta(m, rec.id); const qu = Number(a&&a.cantPorUnidad)||0;
+    const q = qu * und * (Number(lotes)||0) / Math.max(1, Number(m.udPorPres)||1);
+    if(q>0) res[m.id] = +q.toFixed(4);
+  });
+  return res;
+}
+function kxPkgMov(mat, tipo, cant, o, obs){
+  const stockAntes = Number(mat.stock)||0;
+  mat.stock = tipo==='egreso' ? Math.max(0, +(stockAntes - cant).toFixed(4)) : +(stockAntes + cant).toFixed(4);
+  mat._ts = Date.now();
+  if(!DB.packagingMovimientos) DB.packagingMovimientos = [];
+  DB.packagingMovimientos.unshift({
+    id:'PMV-'+Date.now().toString(36).toUpperCase().slice(-6)+Math.floor(Math.random()*90+10),
+    materialId:mat.id, materialNombre:mat.nombre, tipo, cantidad:cant, stockAntes, stockDespues:mat.stock,
+    obs, ref:o.nro, fecha:o.fecha || new Date().toISOString().split('T')[0],
+    usuario:(typeof usuarioActual!=='undefined' && usuarioActual?.nombre)||'', fechaReg:new Date().toISOString(),
+  });
+}
+function kxPkgPost(antes){
+  let cambio = false; const faltan = [];
+  (DB.ordenes||[]).forEach(o=>{
+    const prev = antes.get(o.nro);
+    if(o.estado!=='Ejecutada' || o.pkgDesc || (prev && prev.est==='Ejecutada')) return;
+    const rec = getReceta(o.recetaId); const nec = kxPkgNecesario(rec, o.lotes||o.unidades);
+    o.pkgDesc = nec;
+    Object.entries(nec).forEach(([id,q])=>{
+      const m = (DB.packaging||[]).find(x=>x.id===id); if(!m) return;
+      if((Number(m.stock)||0) < q) faltan.push(`${m.nombre} (faltan ${fmtN(q-(Number(m.stock)||0))} ${m.uom||'ud.'})`);
+      kxPkgMov(m, 'egreso', q, o, `Orden ${o.nro} ejecutada — ${o.producto||''}`);
+    });
+    if(Object.keys(nec).length){ cambio = true; registrarAuditoria('Movimiento', 'Packaging', `Orden ${o.nro} ejecutada: se descontó ${Object.entries(nec).map(([id,q])=>{ const m=(DB.packaging||[]).find(x=>x.id===id); return (m?m.nombre:id)+' '+fmtN(q); }).join(', ')}`); }
+  });
+  antes.forEach((v, nro)=>{
+    if((DB.ordenes||[]).some(x=>x.nro===nro)) return;
+    const o = v.o; if(!o.pkgDesc || !Object.keys(o.pkgDesc).length) return;
+    Object.entries(o.pkgDesc).forEach(([id,q])=>{ const m = (DB.packaging||[]).find(x=>x.id===id); if(m) kxPkgMov(m, 'ingreso', q, o, `Orden ${o.nro} eliminada — se repone el packaging`); });
+    cambio = true;
+  });
+  if(cambio){ guardarEnStorage(); try{ if(document.getElementById('page-packaging')?.classList.contains('active')) renderPackaging(); }catch(_){} }
+  if(faltan.length) setTimeout(()=>toast(`⚠️ Packaging sin stock suficiente: ${faltan.join(' · ')}. Quedó en 0, cargá el ingreso.`,'error'), 600);
+}
+function kxPkgVigilar(nombre){
+  const o0 = window[nombre]; if(typeof o0!=='function') return;
+  const w = function(){
+    const antes = new Map((DB.ordenes||[]).map(o=>[o.nro, { o, est:o.estado }]));
+    const r = o0.apply(this, arguments);
+    try{ kxPkgPost(antes); }catch(e){ console.warn('v38.8 packaging stock:', e); }
+    return r;
+  };
+  Object.keys(o0).forEach(k=>{ try{ w[k] = o0[k]; }catch(_){} });
+  window[nombre] = w;
+}
+['guardarOrdenProduccion','confirmarEdicionOrden','kxPpEjecutar','confirmarEliminacionOrden'].forEach(kxPkgVigilar);
 
 </script>
 </body>
