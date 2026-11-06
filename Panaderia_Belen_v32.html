@@ -17468,7 +17468,7 @@ function kxPurgarArchivados(){
 });
 
 // Número de versión visible
-const BELEN_BUILD='38.8';
+const BELEN_BUILD = '38.9';
 (function(){
   document.title = document.title.replace(/v\d+(\.\d+)?/, 'v'+BELEN_BUILD);
   document.querySelectorAll('.sidebar-brand div').forEach(d=>{ if(/^v\d+(\.\d+)?$/.test(d.textContent.trim())) d.textContent = 'v'+BELEN_BUILD; });
@@ -17481,9 +17481,15 @@ async function kxChequearVersion(){
     const r = await fetch(location.pathname+'?v='+Date.now(), {cache:'no-store'});
     if(!r.ok) return;
     const t = await r.text();
-    const m = t.match(/const BELEN_BUILD = '([^']+)'/);
-    if(m && m[1] !== BELEN_BUILD) kxAvisoVersion(m[1]);
+    const m = t.match(/const BELEN_BUILD\s*=\s*'([^']+)'/);
+    // v38.9: avisar solo si la de GitHub es MÁS NUEVA (una copia vieja en caché no dispara el cartel)
+    if(m && kxCmpVersion(m[1], BELEN_BUILD) > 0) kxAvisoVersion(m[1]);
   }catch(_){}
+}
+function kxCmpVersion(a, b){
+  const x = String(a).split('.').map(n=>parseInt(n,10)||0), y = String(b).split('.').map(n=>parseInt(n,10)||0);
+  for(let i=0;i<Math.max(x.length,y.length);i++){ const d=(x[i]||0)-(y[i]||0); if(d) return d>0?1:-1; }
+  return 0;
 }
 function kxAvisoVersion(nueva){
   if(document.getElementById('kx-aviso-version')) return;
